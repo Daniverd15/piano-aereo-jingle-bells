@@ -5,6 +5,7 @@ description = "Toca Jingle Bells en el aire: la cámara del portátil detecta tu
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Daniel Enrique Villamizar Ramírez" }]
 dependencies = ["mediapipe>=0.10.14", "numpy", "sounddevice", "Pillow"]
 
 [project.optional-dependencies]
