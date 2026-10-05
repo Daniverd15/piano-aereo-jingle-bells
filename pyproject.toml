@@ -1,0 +1,25 @@
+[project]
+name = "piano-aereo"
+version = "1.0.0"
+description = "Toca Jingle Bells en el aire: la cámara del portátil detecta tus dedos como en un piano."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["mediapipe>=0.10.14", "numpy", "sounddevice", "Pillow"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+piano-aereo = "piano_aereo.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["piano_aereo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

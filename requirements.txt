@@ -1,0 +1,6 @@
+# Python 3.9 o superior.
+# mediapipe instala además OpenCV (opencv-contrib-python).
+mediapipe>=0.10.14
+numpy
+sounddevice
+Pillow
