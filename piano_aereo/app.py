@@ -4,23 +4,25 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import time
-from typing import Dict, Hashable, List, Optional, Sequence, Tuple
+from typing import Dict, Hashable, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
 from . import config
-from .canciones import CANCIONES, Demo, Guia
+from .canciones import CANCIONES, Demo, Guia, Ritmo
 from .interfaz import Interfaz
 from .notas import Teclado
-from .sintetizador import MotorAudio
+from .sintetizador import MotorAudio, acompanamiento
 from .toques import DetectorToques
 
 log = logging.getLogger(__name__)
 
-MODOS = ("libre", "guia", "demo")
+MODOS = ("libre", "guia", "ritmo", "demo")
 _ESC = 27
+_FONDO = "fondo"  # voz del motor de audio reservada al acompañamiento
 
 
 class App:
@@ -32,24 +34,25 @@ class App:
         self.interfaz = Interfaz(self.teclado)
         self.detector = DetectorToques(args.sensibilidad)
         self.audio = MotorAudio(self.teclado.notas, args.timbre, activo=not args.sin_sonido)
-        self.sin_camara = args.sin_camara
         self.vision = None
-        if not self.sin_camara:
+        if not args.sin_camara:
             from .vision import Vision
 
             self.vision = Vision(args.camara, espejo=not args.sin_espejo)
         self.pantalla_completa = args.pantalla_completa
 
         self.cancion_id = args.cancion
+        self.dificultad = args.dificultad
+        self.asistencia = not args.sin_asistencia
+        self.acompanar = not args.sin_acompanamiento
         self.modo = "libre"
-        self.guia = Guia(CANCIONES[self.cancion_id])
-        self.demo = Demo(CANCIONES[self.cancion_id], 0.0)
         self.pulso_vis = 0.0
         self.pulsadas: Dict[Hashable, int] = {}  # voz -> tecla que mantiene pulsada
         self.fallos: Dict[int, float] = {}  # tecla -> instante del último error
         self.notas_pc: List[Tuple[Hashable, float]] = []  # (voz, instante de soltar)
         self.ver_ayuda = False
         self.ver_esqueleto = True
+        self._ondas: Dict[Hashable, np.ndarray] = {}  # acompañamientos ya renderizados
         self._aviso: Tuple[str, float] = ("", 0.0)
         self._imagen: Optional[np.ndarray] = None
         self._manos: Sequence[np.ndarray] = ()
@@ -65,22 +68,76 @@ class App:
     def avisar(self, cadena: str, ahora: float, segundos: float = 2.0) -> None:
         self._aviso = (cadena, ahora + segundos)
 
+    def _onda_fondo(self, bpm: float, melodia: Optional[str]) -> np.ndarray:
+        clave = (self.cancion_id, bpm, melodia, self.acompanar, self.audio.fm)
+        if clave not in self._ondas:
+            self._ondas[clave] = acompanamiento(
+                self.cancion, bpm, self.audio.fm, Ritmo.ENTRADA, melodia, self.acompanar)
+        return self._ondas[clave]
+
     def cambiar_modo(self, modo: str, ahora: float) -> None:
+        """Entra en un modo (o lo reinicia) con la canción desde el principio."""
         self.modo = modo
         self.audio.silenciar()
         self.pulsadas.clear()
         self.fallos.clear()
+        self.notas_pc = []
+        self.interfaz.limpiar_efectos()
+        _, bpm, ventanas = config.DIFICULTADES[self.dificultad]
+        con_fondo = modo in ("ritmo", "demo")
+        if con_fondo:
+            # En Demo la melodía va dentro de la misma onda que el
+            # acompañamiento, así suena exactamente a tempo.
+            inicio = time.perf_counter()
+            onda = self._onda_fondo(bpm, self.audio.timbre if modo == "demo" else None)
+            ahora += time.perf_counter() - inicio  # lo que tardó en renderizarse
+            self.audio.tocar_onda(_FONDO, onda, config.VOLUMEN_FONDO)
+        # La pantalla se retrasa lo que tarda el sonido en salir por los
+        # altavoces, para que la nota cruce la línea justo cuando se oye el pulso.
+        t0 = ahora + self.audio.latencia
         self.guia = Guia(self.cancion)
-        self.demo = Demo(self.cancion, ahora)
-        self.pulso_vis = -Demo.ENTRADA if modo == "demo" else 0.0
+        self.ritmo = Ritmo(self.cancion, bpm, ventanas, t0)
+        self.demo = Demo(self.cancion, t0, bpm)
+        self.pulso_vis = -Ritmo.ENTRADA if con_fondo else 0.0
 
-    def tocar(self, voz: Hashable, tecla: int, fuerza: float, ahora: float, del_usuario: bool = True) -> None:
+    def _objetivos(self, t: float) -> Iterable[int]:
+        """Teclas que la canción espera en este momento (para la asistencia)."""
+        if self.modo == "guia" and not self.guia.terminada:
+            return [self.teclado.indice(self.guia.objetivo)]
+        if self.modo == "ritmo":
+            notas = self.cancion.notas
+            return [self.teclado.indice(notas[i].nota) for i in self.ritmo.candidatas(t)]
+        return ()
+
+    def tecla_para(self, x: float, t: float) -> Optional[int]:
+        """Tecla que toca un dedo situado en ``x``, aplicando la asistencia."""
+        tecla = self.teclado.tecla_en(x)
+        if self.asistencia:
+            objetivos = list(self._objetivos(t))
+            if tecla not in objetivos:
+                iman = config.IMAN * self.teclado.ancho_tecla
+                cercanas = [o for o in objetivos if self.teclado.distancia(o, x) <= iman]
+                if cercanas:
+                    return min(cercanas, key=lambda o: self.teclado.distancia(o, x))
+        return tecla
+
+    def tocar(self, voz: Hashable, tecla: int, fuerza: float, ahora: float,
+              t_juicio: Optional[float] = None) -> None:
+        """Hace sonar una tecla tocada por el usuario y la pasa al modo de juego."""
         nota = self.teclado.notas[tecla]
         self.audio.tocar(voz, nota, fuerza, self.teclado.paneo(tecla))
         self.pulsadas[voz] = tecla
-        self.interfaz.chispear(tecla)
-        if del_usuario and self.modo == "guia" and self.guia.pulsar(nota, ahora) is False:
-            self.fallos[tecla] = ahora
+        chispas = 12
+        if self.modo == "guia":
+            if self.guia.pulsar(nota, ahora) is False:
+                self.fallos[tecla] = ahora
+        elif self.modo == "ritmo":
+            acierto = self.ritmo.pulsar(nota, ahora if t_juicio is None else t_juicio)
+            chispas = 6
+            if acierto is not None:
+                self.interfaz.cartel(tecla, acierto[1], ahora)
+                chispas = 32 if acierto[1] == "perfecto" else 18
+        self.interfaz.chispear(tecla, chispas)
 
     def soltar(self, voz: Hashable) -> None:
         self.audio.soltar(voz)
@@ -96,9 +153,11 @@ class App:
             if not toque.pulsa:
                 self.soltar(toque.voz)
                 continue
-            tecla = self.teclado.tecla_en(toque.x)
+            # El dedo se movió un poco antes de que llegara el fotograma.
+            t_real = t - config.RETRASO_CAMARA
+            tecla = self.tecla_para(toque.x, t_real)
             if tecla is not None:
-                self.tocar(toque.voz, tecla, toque.fuerza, t)
+                self.tocar(toque.voz, tecla, toque.fuerza, t, t_real)
 
     def avanzar(self, ahora: float, dt: float) -> None:
         """Lógica que depende del tiempo y no de la cámara."""
@@ -106,16 +165,25 @@ class App:
             if ahora >= t_fin:
                 self.soltar(voz)
                 self.notas_pc.remove((voz, t_fin))
+        notas = self.cancion.notas
         if self.modo == "demo":
             empiezan, terminan = self.demo.actualizar(ahora)
             for i in terminan:
-                self.soltar(("demo", i))
-            for i in empiezan:
-                tecla = self.teclado.indice(self.cancion.notas[i].nota)
-                self.tocar(("demo", i), tecla, 0.8, ahora, del_usuario=False)
+                self.pulsadas.pop(("demo", i), None)
+            for i in empiezan:  # el sonido ya va en la onda de fondo: solo se dibuja
+                tecla = self.teclado.indice(notas[i].nota)
+                self.pulsadas[("demo", i)] = tecla
+                self.interfaz.chispear(tecla)
             self.pulso_vis = self.demo.pulso(ahora)
+            if self.demo.terminada(ahora):
+                self.cambiar_modo("demo", ahora)
+        elif self.modo == "ritmo":
+            for i in self.ritmo.actualizar(ahora):
+                tecla = self.teclado.indice(notas[i].nota)
+                self.fallos[tecla] = ahora
+                self.interfaz.cartel(tecla, "fallo", ahora)
+            self.pulso_vis = self.ritmo.pulso(ahora)
         elif self.modo == "guia":
-            notas = self.cancion.notas
             meta = self.cancion.pulsos_totales if self.guia.terminada else notas[self.guia.indice].inicio
             self.pulso_vis += (meta - self.pulso_vis) * min(1.0, dt * 12.0)
 
@@ -124,15 +192,32 @@ class App:
         c = chr(k).lower() if 0 < k < 256 else ""
         if k == _ESC or c == "q":
             return False
-        if c in ("1", "2", "3"):
+        if c in ("1", "2", "3", "4"):
             self.cambiar_modo(MODOS[int(c) - 1], ahora)
         elif c == "s":
             ids = list(CANCIONES)
             self.cancion_id = ids[(ids.index(self.cancion_id) + 1) % len(ids)]
             self.cambiar_modo(self.modo, ahora)
             self.avisar(self.cancion.nombre, ahora)
+        elif c == "d":
+            ids = list(config.DIFICULTADES)
+            self.dificultad = ids[(ids.index(self.dificultad) + 1) % len(ids)]
+            self.cambiar_modo(self.modo, ahora)
+            nombre, bpm, _ = config.DIFICULTADES[self.dificultad]
+            self.avisar("Dificultad: %s (%d pulsos por minuto)" % (nombre, bpm), ahora)
         elif c == "t":
-            self.avisar("Timbre: " + config.NOMBRES_TIMBRE[self.audio.siguiente_timbre()], ahora)
+            nombre = config.NOMBRES_TIMBRE[self.audio.siguiente_timbre()]
+            if self.modo == "demo":  # la melodía de la demo va en la onda de fondo
+                self.cambiar_modo(self.modo, ahora)
+            self.avisar("Timbre: " + nombre, ahora)
+        elif c == "p":
+            self.acompanar = not self.acompanar
+            if self.modo in ("ritmo", "demo"):
+                self.cambiar_modo(self.modo, ahora)
+            self.avisar("Acompañamiento: " + ("sí" if self.acompanar else "no"), ahora)
+        elif c == "a":
+            self.asistencia = not self.asistencia
+            self.avisar("Asistencia: " + ("activada" if self.asistencia else "desactivada"), ahora)
         elif c == "r":
             self.cambiar_modo(self.modo, ahora)
         elif c in ("+", "="):
@@ -158,37 +243,47 @@ class App:
     # ----------------------------------------------------------------- dibujo
     def componer(self, ahora: float) -> np.ndarray:
         """Dibuja la escena completa y devuelve el lienzo."""
-        dt = 0.0 if self._t_dibujo is None else min(ahora - self._t_dibujo, 0.1)
+        dt = 0.0 if self._t_dibujo is None else min(max(ahora - self._t_dibujo, 0.0), 0.1)
         self._t_dibujo = ahora
-        ui, guia, cancion = self.interfaz, self.guia, self.cancion
-        con_pista = self.modo in ("guia", "demo")
+        ui, guia, ritmo, cancion = self.interfaz, self.guia, self.ritmo, self.cancion
+        notas = cancion.notas
+        con_pista = self.modo != "libre"
 
-        objetivo = None
-        if self.modo == "guia" and not guia.terminada:
-            objetivo = self.teclado.indice(guia.objetivo)
+        objetivo, estados = None, None
         if self.modo == "demo":
             sonando = [i for i, _ in self.demo.sonando]
             desde = min(sonando) if sonando else self.demo.indice
             actual = max(self.demo.indice - 1, 0)
-            progreso = self.demo.pulso(ahora) / cancion.pulsos_totales
+            progreso = self.pulso_vis / cancion.pulsos_totales
+        elif self.modo == "ritmo":
+            estados = ritmo.estados
+            desde = max(ritmo.primera - 6, 0)
+            actual = next((i for i in range(desde, len(notas))
+                           if notas[i].inicio + notas[i].pulsos > self.pulso_vis), len(notas))
+            progreso = self.pulso_vis / cancion.pulsos_totales
         else:
+            if self.modo == "guia" and not guia.terminada:
+                objetivo = self.teclado.indice(guia.objetivo)
             desde = actual = guia.indice
             progreso = guia.indice / float(len(cancion))
 
         lienzo = ui.fondo(self._imagen)
         ui.nieve(lienzo, dt)
-        ui.carriles(lienzo, objetivo)
+        ui.carriles(lienzo, objetivo, autopista=con_pista)
         if con_pista:
-            ui.pista(lienzo, cancion, self.pulso_vis, desde)
+            ui.pista(lienzo, cancion, self.pulso_vis, desde, estados)
         ui.dibujar_teclado(lienzo, self.pulsadas.values(), objetivo, self.fallos, ahora,
                            con_teclas_pc=not self._camara_activa())
         ui.chispas(lienzo, dt)
+        ui.carteles(lienzo, ahora)
         ui.manos(lienzo, self._manos, self.detector.lecturas, self.ver_esqueleto)
 
-        fps = self.vision.fps if self.vision is not None else 0.0
-        detalle = "%s  ·  %s" % (cancion.nombre, config.NOMBRES_TIMBRE[self.audio.timbre])
-        if fps:
-            detalle += "  ·  %d fps" % round(fps)
+        detalle = cancion.nombre
+        if self.modo in ("ritmo", "demo"):
+            detalle += "  ·  " + config.DIFICULTADES[self.dificultad][0]
+        detalle += "  ·  " + config.NOMBRES_TIMBRE[self.audio.timbre]
+        if self.vision is not None and self.vision.fps:
+            detalle += "  ·  %d fps" % round(self.vision.fps)
         ui.barra(lienzo, self.modo, detalle, progreso if con_pista else None)
 
         aviso, hasta = self._aviso
@@ -196,12 +291,19 @@ class App:
             ui.aviso(lienzo, aviso, 130 if con_pista else 74)
         if con_pista:
             ui.letra(lienzo, cancion, actual)
+        en_cuenta_atras = self.modo in ("ritmo", "demo") and self.pulso_vis < 0
+        if en_cuenta_atras:
+            ui.aviso(lienzo, str(max(1, int(math.ceil(-self.pulso_vis)))), 230, 120)
         if self.modo == "guia":
             ui.marcador(lienzo, guia)
             if guia.terminada:
                 ui.panel_final(lienzo, guia, ahora)
+        elif self.modo == "ritmo":
+            ui.marcador_ritmo(lienzo, ritmo)
+            if ritmo.terminada(ahora):
+                ui.panel_final_ritmo(lienzo, ritmo)
         estado = self._estado_camara(ahora)
-        if estado:
+        if estado and not en_cuenta_atras:
             ui.aviso(lienzo, estado, 330)
         elif self.modo == "libre" and ahora >= hasta:
             ui.aviso(lienzo, "Modo libre: lleva el dedo al carril de una tecla y dóblalo para tocarla",
@@ -220,7 +322,10 @@ class App:
             return "Sin cámara (%s). Toca con las teclas Z X C V B N M , . /" % self.vision.error
         if not self.vision.lista:
             return "Abriendo la cámara…"
-        if self.modo != "demo" and ahora - self._t_manos > 2.0:
+        if self.vision.oscura:
+            return "La cámara da imagen negra: abre su tapa o cierra otras apps que la usen"
+        en_resultados = self.modo == "ritmo" and self.ritmo.terminada(ahora)
+        if self.modo != "demo" and not en_resultados and ahora - self._t_manos > 2.0:
             return "Muestra tus manos a la cámara"
         return ""
 
@@ -236,6 +341,8 @@ class App:
         if self.vision is not None:
             self.vision.start()
         self._t_manos = anterior = time.perf_counter()
+        # La canción empieza al abrirse la ventana, no al crear la aplicación.
+        self.cambiar_modo(self.modo, anterior)
         try:
             while True:
                 if self._camara_activa():
@@ -264,6 +371,53 @@ class App:
         return 0
 
 
+def diagnostico(camara: int) -> int:
+    """Comprueba modelo, cámara, seguimiento de manos y audio sin abrir el piano."""
+    from .vision import Vision, asegurar_modelo
+
+    fallos = 0
+
+    def informe(nombre: str, ok: bool, texto: str) -> None:
+        nonlocal fallos
+        fallos += 0 if ok else 1
+        print("[%s] %-10s %s" % ("OK" if ok else "FALLO", nombre, texto))
+
+    try:
+        ruta = asegurar_modelo()
+        informe("Modelo", True, "%s (%.1f MB)" % (ruta.name, ruta.stat().st_size / 1e6))
+    except Exception as exc:
+        informe("Modelo", False, str(exc))
+    vision = Vision(camara)
+    vision.start()
+    # Hasta 10 s para que la cámara arranque y luego 3 s midiendo.
+    cuadros, forma, inicio, primero = 0, None, time.perf_counter(), None
+    while not vision.error:
+        ahora = time.perf_counter()
+        if (primero is None and ahora - inicio > 10.0) or (primero is not None and ahora - primero > 3.0):
+            break
+        cuadro = vision.esperar(0.1)
+        if cuadro is not None:
+            primero = cuadro.t if primero is None else primero
+            cuadros, forma = cuadros + 1, cuadro.imagen.shape
+    fps = (cuadros - 1) / 3.0
+    vision.detener()
+    if vision.error or not cuadros:
+        informe("Cámara", False, vision.error or "no llegó ninguna imagen de la cámara %d" % camara)
+    elif vision.oscura:
+        informe("Cámara", False, "la cámara %d da imagen negra: abre su tapa de privacidad o "
+                                 "cierra otras aplicaciones que la estén usando" % camara)
+    else:
+        informe("Cámara", fps >= 15, "cámara %d, %dx%d, seguimiento de manos a %d fps%s" % (
+            camara, forma[1], forma[0], round(fps),
+            "" if fps >= 15 else " (muy lento: mejora la luz o cierra otros programas)"))
+    audio = MotorAudio(config.NOTAS_TECLADO)
+    informe("Audio", audio.disponible, "%d Hz, latencia %d ms" % (audio.fm, round(audio.latencia * 1000))
+            if audio.disponible else "no se pudo abrir la salida de sonido")
+    audio.cerrar()
+    print("Todo listo para tocar." if not fallos else "Hay %d problema(s) que revisar." % fallos)
+    return 1 if fallos else 0
+
+
 def crear_argumentos() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="piano_aereo",
@@ -271,14 +425,22 @@ def crear_argumentos() -> argparse.ArgumentParser:
     )
     p.add_argument("--modo", choices=MODOS, default="guia", help="modo inicial (por defecto: guia)")
     p.add_argument("--cancion", choices=list(CANCIONES), default="coro", help="coro o canción completa")
+    p.add_argument("--dificultad", choices=list(config.DIFICULTADES), default="normal",
+                   help="velocidad de los modos Ritmo y Demo")
     p.add_argument("--timbre", choices=config.TIMBRES, default="piano")
     p.add_argument("--camara", type=int, default=0, help="índice de la cámara (0 = la del portátil)")
     p.add_argument("--sensibilidad", type=float, default=config.SENSIBILIDAD,
                    help="cuánto hay que doblar el dedo, de 0.10 (poco) a 0.40 (mucho)")
+    p.add_argument("--sin-asistencia", action="store_true",
+                   help="no perdonar los toques que caen al borde de la tecla esperada")
+    p.add_argument("--sin-acompanamiento", action="store_true",
+                   help="modos Ritmo y Demo sin bajo, acordes ni cascabeles")
     p.add_argument("--sin-camara", action="store_true", help="tocar solo con el teclado del PC")
     p.add_argument("--sin-espejo", action="store_true", help="no voltear la imagen como un espejo")
     p.add_argument("--sin-sonido", action="store_true")
     p.add_argument("--pantalla-completa", action="store_true")
+    p.add_argument("--diagnostico", action="store_true",
+                   help="comprobar cámara, modelo y audio, y salir")
     p.add_argument("--detalle", action="store_true", help="mostrar mensajes de diagnóstico")
     return p
 
@@ -287,5 +449,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = crear_argumentos().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.detalle else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    if args.diagnostico:
+        return diagnostico(args.camara)
     args.sensibilidad = min(max(args.sensibilidad, config.SENSIBILIDAD_MIN), config.SENSIBILIDAD_MAX)
     return App(args).ejecutar()

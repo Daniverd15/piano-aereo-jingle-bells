@@ -108,6 +108,7 @@ class Vision(threading.Thread):
         self.error: Optional[str] = None
         self.lista = False
         self.fps = 0.0
+        self.brillo = 255.0  # brillo medio de la imagen, de 0 a 255
         self._ultimo: Optional[Cuadro] = None
         self._nuevo = threading.Event()
         self._parar = threading.Event()
@@ -140,6 +141,7 @@ class Vision(threading.Thread):
                 cuadro = recortar(cuadro, config.ANCHO / float(config.ALTO))
                 if self.espejo:
                     cuadro = cv2.flip(cuadro, 1)
+                self.brillo = float(cuadro[::16, ::16].mean())
                 manos = rastreador.detectar(cuadro, t, config.ANCHO, config.ALTO)
                 numero += 1
                 self._ultimo = Cuadro(cuadro, manos, t, numero)
@@ -156,6 +158,11 @@ class Vision(threading.Thread):
                 captura.release()
             if rastreador is not None:
                 rastreador.cerrar()
+
+    @property
+    def oscura(self) -> bool:
+        """La cámara funciona pero entrega imagen negra (tapa cerrada o cámara ocupada)."""
+        return self.lista and self.brillo < 12.0
 
     def esperar(self, segundos: float) -> Optional[Cuadro]:
         """Espera un fotograma nuevo; devuelve ``None`` si no llega a tiempo."""

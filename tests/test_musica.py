@@ -105,3 +105,63 @@ def test_mezclador():
     motor.tocar("a", "D4")  # repetir en la misma voz no acumula voces
     assert len(motor._voces) == 1 and len(motor._colas) == 1
     assert motor.siguiente_timbre() == "campanas"
+
+
+def test_ritmo_califica_segun_la_punteria():
+    from piano_aereo.canciones import Ritmo
+
+    r = Ritmo(CANCIONES["coro"], 120, (0.10, 0.20), t0=0.0)  # un pulso = 0.5 s
+    assert r.instante(0) == pytest.approx(Ritmo.ENTRADA * 0.5)
+    assert r.pulso(r.instante(0)) == pytest.approx(0.0)
+    assert r.pulsar("E4", r.instante(0) - 0.5) is None  # demasiado pronto: no cuenta
+    assert r.pulsar("C4", r.instante(0)) is None  # tecla equivocada
+    assert r.pulsar("E4", r.instante(0) + 0.05) == (0, "perfecto")
+    assert r.pulsar("E4", r.instante(1) - 0.15) == (1, "bien")
+    assert (r.puntos, r.combo, r.aciertos) == (160, 2, 2)
+    assert r.actualizar(r.instante(2) + 0.19) == []  # aún se puede tocar
+    assert r.actualizar(r.instante(2) + 0.21) == [2]  # se pasó: fallo y adiós combo
+    assert (r.combo, r.mejor_combo, r.conteo["fallo"]) == (0, 2, 1)
+    assert r.pulsar("E4", r.instante(2) + 0.21) is None  # una nota fallada ya no puntúa
+
+
+def test_ritmo_el_combo_multiplica_hasta_x4():
+    from piano_aereo.canciones import Ritmo
+
+    r = Ritmo(CANCIONES["coro"], 120, (0.10, 0.20), t0=0.0)
+    for i, n in enumerate(r.cancion.notas):
+        assert r.multiplicador == min(4, 1 + i // Ritmo.COMBO_POR_NIVEL)
+        assert r.pulsar(n.nota, r.instante(i)) == (i, "perfecto")
+        assert r.actualizar(r.instante(i)) == []
+    assert r.precision == 1.0 and r.calificacion == "S" and r.estrellas == 5
+    assert not r.terminada(r.instante(len(r.cancion) - 1)) and r.terminada(r.instante(0) + 60)
+
+
+@pytest.mark.parametrize("identificador", list(CANCIONES))
+def test_hay_un_acorde_por_compas(identificador):
+    from piano_aereo.sintetizador import ACORDES
+
+    cancion = CANCIONES[identificador]
+    assert len(cancion.acordes) * 4 == cancion.pulsos_totales
+    assert set(cancion.acordes) <= set(ACORDES)
+
+
+def test_acompanamiento():
+    from piano_aereo.sintetizador import acompanamiento
+
+    cancion, fm, bpm = CANCIONES["coro"], 16000, 120
+    fondo = acompanamiento(cancion, bpm, fm, entrada=4.0)
+    assert fondo.dtype == np.float32 and np.isfinite(fondo).all()
+    assert len(fondo) == int((4 + 64 + 3) * 0.5 * fm)
+    assert 0.3 < np.abs(fondo).max() < 1.0  # se oye y no satura
+    # La cuenta atrás son cuatro clics, uno por pulso, y entre ellos hay silencio.
+    pulso = int(0.5 * fm)
+    for k in range(4):
+        assert np.abs(fondo[k * pulso:k * pulso + 200]).max() > 0.2
+        assert np.abs(fondo[k * pulso + pulso // 2:(k + 1) * pulso - 10]).max() < 0.01
+    solo_clics = acompanamiento(cancion, bpm, fm, fondo=False)
+    assert not solo_clics[4 * pulso:].any()
+    con_melodia = acompanamiento(cancion, bpm, fm, melodia="piano", fondo=False)
+    # La primera nota (Mi4, 329.6 Hz) suena justo al acabar la cuenta atrás.
+    trozo = con_melodia[4 * pulso:5 * pulso]
+    espectro = np.abs(np.fft.rfft(trozo))
+    assert abs(np.argmax(espectro) * fm / len(trozo) - 329.6) < 4

@@ -61,6 +61,82 @@ def sintetizar(
     return (0.9 * onda / np.max(np.abs(onda))).astype(np.float32)
 
 
+# Acompañamiento: por acorde, (bajo, quinta, tríada).
+ACORDES = {
+    "C": ("C3", "G2", ("E3", "G3", "C4")),
+    "F": ("F2", "C3", ("F3", "A3", "C4")),
+    "G": ("G2", "D3", ("G3", "B3", "D4")),
+    "D": ("D3", "A2", ("F#3", "A3", "D4")),
+}
+
+
+def cascabel(fm: int, duracion: float = 0.16) -> np.ndarray:
+    """Golpe de cascabeles: parciales agudos no armónicos más ruido."""
+    azar = np.random.default_rng(3)
+    t = np.arange(int(fm * duracion)) / fm
+    onda = 0.8 * azar.standard_normal(len(t))
+    for frec in (2700.0, 3400.0, 4300.0, 5200.0, 6100.0, 7300.0):
+        if frec < fm / 2.2:
+            onda += np.sin(2.0 * np.pi * frec * t + azar.uniform(0, 6.28))
+    onda *= np.exp(-28.0 * t) * (0.6 + 0.4 * np.sin(2.0 * np.pi * 38.0 * t) ** 2)
+    return (onda / np.max(np.abs(onda))).astype(np.float32)
+
+
+def clic(fm: int) -> np.ndarray:
+    """Golpe seco para la cuenta atrás."""
+    t = np.arange(int(fm * 0.06)) / fm
+    return (np.sin(2.0 * np.pi * 1200.0 * t) * np.exp(-60.0 * t)).astype(np.float32)
+
+
+def acompanamiento(cancion, bpm: float, fm: int, entrada: float = 4.0,
+                   melodia: Optional[str] = None, fondo: bool = True) -> np.ndarray:
+    """Renderiza la pista de fondo completa de una canción como onda mono.
+
+    Empieza ``entrada`` pulsos antes de la primera nota, con un clic por
+    pulso como cuenta atrás. Con ``fondo`` añade bajo alternado, acordes y
+    cascabeles; con ``melodia`` (un timbre) añade también la melodía. Al ser
+    una sola onda, todo queda sincronizado con precisión de muestra.
+    """
+    seg_pulso = 60.0 / bpm
+    pista = np.zeros(int((entrada + cancion.pulsos_totales + 3.0) * seg_pulso * fm), dtype=np.float32)
+    cache: Dict[Hashable, np.ndarray] = {}
+
+    def nota(nombre: str, timbre: str, segundos: float) -> np.ndarray:
+        clave = (nombre, timbre, round(segundos, 3))
+        if clave not in cache:
+            onda = sintetizar(frecuencia(nombre), timbre, fm, min(segundos + 0.4, config.DURACION_NOTA))
+            corte = min(int(segundos * fm), len(onda))
+            onda[corte:] *= np.exp(-np.arange(len(onda) - corte) / (fm * 0.08)).astype(np.float32)
+            cache[clave] = onda
+        return cache[clave]
+
+    def poner(onda: np.ndarray, pulso: float, ganancia: float) -> None:
+        i = int(round((pulso + entrada) * seg_pulso * fm))
+        n = min(len(onda), len(pista) - i)
+        if i >= 0 and n > 0:
+            pista[i:i + n] += ganancia * onda[:n]
+
+    golpe = clic(fm)
+    for k in range(int(entrada)):
+        poner(golpe, k - entrada, 0.5)
+    if fondo:
+        campanas = cascabel(fm)
+        for pulso in range(int(cancion.pulsos_totales)):
+            poner(campanas, pulso, 0.15)
+            poner(campanas, pulso + 0.5, 0.07)
+        for compas, acorde in enumerate(cancion.acordes):
+            bajo, quinta, triada = ACORDES[acorde]
+            poner(nota(bajo, "piano", 1.6 * seg_pulso), 4 * compas, 0.36)
+            poner(nota(quinta, "piano", 1.6 * seg_pulso), 4 * compas + 2, 0.30)
+            for tiempo in (1, 3):
+                for nombre in triada:
+                    poner(nota(nombre, "piano", 0.5 * seg_pulso), 4 * compas + tiempo, 0.10)
+    if melodia:
+        for n in cancion.notas:
+            poner(nota(n.nota, melodia, n.pulsos * seg_pulso * 0.92), n.inicio, 0.75)
+    return pista
+
+
 class _Voz:
     __slots__ = ("muestra", "pos", "izq", "der", "soltando", "ganancia", "tau")
 
@@ -88,6 +164,7 @@ class MotorAudio:
         self.volumen = volumen
         self.fm = config.FRECUENCIA_MUESTREO
         self.disponible = False
+        self.latencia = 0.0  # s que tarda el sonido en salir por los altavoces
         self._candado = threading.Lock()
         self._voces: Dict[Hashable, _Voz] = {}
         self._colas: List[_Voz] = []  # voces soltadas que aún se apagan
@@ -130,6 +207,7 @@ class MotorAudio:
                 log.info("No se pudo abrir la salida %s (%s)", dispositivo, exc)
                 continue
             self._flujo, self.fm, self.disponible = flujo, fm, True
+            self.latencia = float(flujo.latency)
             log.info("Audio listo: %d Hz, latencia %.0f ms", fm, flujo.latency * 1000)
             return
         log.warning("No hay salida de audio: la aplicación seguirá sin sonido")
@@ -166,6 +244,13 @@ class MotorAudio:
         angulo = (float(np.clip(paneo, -1.0, 1.0)) + 1.0) * np.pi / 4.0
         fuerza = float(np.clip(fuerza, 0.0, 1.0))
         nueva = _Voz(muestra, fuerza * float(np.cos(angulo)), fuerza * float(np.sin(angulo)))
+        with self._candado:
+            self._apagar(voz, tau=0.03)
+            self._voces[voz] = nueva
+
+    def tocar_onda(self, voz: Hashable, onda: np.ndarray, ganancia: float = 1.0) -> None:
+        """Reproduce una onda mono ya renderizada (p. ej. el acompañamiento)."""
+        nueva = _Voz(onda, ganancia * 0.7071, ganancia * 0.7071)
         with self._candado:
             self._apagar(voz, tau=0.03)
             self._voces[voz] = nueva

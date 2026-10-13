@@ -47,3 +47,17 @@ NOMBRES_TIMBRE = {"piano": "Piano", "campanas": "Campanas", "cajita": "Caja de m
 # ----------------------------------------------------------------- pista
 PX_POR_PULSO = 70
 PISTA_Y_MIN = 118
+
+# ----------------------------------------------------------------- juego
+# Dificultad: (nombre, pulsos por minuto, (tolerancia perfecto, tolerancia bien) en s).
+DIFICULTADES = {
+    "facil": ("Fácil", 84, (0.14, 0.28)),
+    "normal": ("Normal", 108, (0.12, 0.24)),
+    "dificil": ("Difícil", 132, (0.10, 0.20)),
+}
+# Retraso medio entre mover el dedo y que la cámara entregue el fotograma.
+RETRASO_CAMARA = 0.05
+# Asistencia: un toque que cae junto a la tecla esperada, a menos de esta
+# fracción del ancho de tecla, cuenta como si hubiera caído en ella.
+IMAN = 0.3
+VOLUMEN_FONDO = 0.8

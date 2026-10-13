@@ -8,14 +8,19 @@
 Aplicación de escritorio, escrita íntegramente en **Python**, que convierte la
 cámara del portátil en un piano. Un teclado aparece en pantalla, la cámara
 sigue las manos en tiempo real y, al doblar un dedo sobre una tecla, suena su
-nota. Incluye un modo guiado para interpretar **Jingle Bells** nota a nota.
+nota. Para interpretar **Jingle Bells** ofrece un modo guiado, nota a nota, y un
+modo de ritmo al estilo de *Guitar Hero*, con notas que caen, combos y puntuación.
 
 **Autor:** Daniel Enrique Villamizar Ramírez
 **Asignatura:** Ciencia de Datos
 
-![Interfaz en modo Guía](docs/captura.png)
+![Modo Ritmo](docs/captura_ritmo.png)
 
-<sub>Captura generada con manos simuladas mediante `scripts/generar_captura.py`. En uso real, el fondo es la imagen de la cámara.</sub>
+| Modo Guía | Resultados del modo Ritmo |
+|:---:|:---:|
+| ![Modo Guía](docs/captura.png) | ![Resultados](docs/captura_resultados.png) |
+
+<sub>Capturas generadas con manos simuladas mediante `scripts/generar_captura.py`. En uso real, el fondo es la imagen de la cámara.</sub>
 
 ---
 
@@ -30,9 +35,10 @@ nota. Incluye un modo guiado para interpretar **Jingle Bells** nota a nota.
 7. [Cómo funciona](#cómo-funciona)
 8. [Estructura del proyecto](#estructura-del-proyecto)
 9. [Pruebas](#pruebas)
-10. [Solución de problemas](#solución-de-problemas)
-11. [Limitaciones](#limitaciones)
-12. [Créditos y licencia](#créditos-y-licencia)
+10. [Antes de una demostración](#antes-de-una-demostración)
+11. [Solución de problemas](#solución-de-problemas)
+12. [Limitaciones](#limitaciones)
+13. [Créditos y licencia](#créditos-y-licencia)
 
 ---
 
@@ -49,8 +55,16 @@ piano, usando únicamente Python.
   notas y formar acordes.
 - **Detección de toques sin calibración.** El sistema aprende solo cómo es cada
   dedo estirado y se adapta a la distancia y a la postura de la mano.
-- **Tres modos de uso:** Libre, Guía (la canción espera a que se acierte cada
-  nota) y Demo (la canción suena sola).
+- **Cuatro modos de uso:** Libre, Guía (la canción espera a que se acierte cada
+  nota), Ritmo (estilo *Guitar Hero*) y Demo (la canción suena sola).
+- **Modo Ritmo.** Las notas caen a tempo hacia el teclado y hay que tocarlas al
+  cruzar la línea de golpe. Cada nota se califica como *Perfecto*, *Bien* o
+  *Fallo*; los aciertos seguidos forman un combo que multiplica los puntos hasta
+  x4, y al final se obtiene una calificación de D a S. Tres dificultades.
+- **Acompañamiento musical** generado por la propia aplicación: bajo, acordes y
+  cascabeles, con cuenta atrás de entrada.
+- **Asistencia de puntería.** Un toque que cae justo al borde de la tecla
+  esperada se da por bueno, lo que hace la interpretación más tolerante.
 - **Jingle Bells en dos versiones:** el coro (51 notas) o la canción completa
   con estrofa (98 notas), con la letra en pantalla estilo karaoke.
 - **Sonido sintetizado.** No se usan archivos de audio: cada nota se genera
@@ -59,6 +73,8 @@ piano, usando únicamente Python.
   segundo y salida de audio de baja latencia.
 - **Ayudas visuales.** Cada punta de dedo muestra una línea hacia la tecla que
   tocaría y un arco que indica cuánto falta para que suene.
+- **Autodiagnóstico** (`--diagnostico`) que comprueba cámara, modelo y audio
+  antes de una presentación.
 - **Pruebas automáticas** que verifican el recorrido completo sin necesidad de
   cámara ni altavoces.
 
@@ -106,20 +122,25 @@ aplicación lo descarga automáticamente al arrancar.
 
 | Opción | Descripción | Valor por defecto |
 |--------|-------------|-------------------|
-| `--modo {libre,guia,demo}` | Modo inicial | `guia` |
+| `--modo {libre,guia,ritmo,demo}` | Modo inicial | `guia` |
 | `--cancion {coro,completa}` | Versión de Jingle Bells | `coro` |
+| `--dificultad {facil,normal,dificil}` | Velocidad de los modos Ritmo y Demo (84, 108 o 132 pulsos por minuto) | `normal` |
 | `--timbre {piano,campanas,cajita}` | Sonido del instrumento | `piano` |
 | `--camara N` | Índice de la cámara | `0` |
 | `--sensibilidad X` | Cuánto hay que doblar el dedo, de `0.10` (poco) a `0.40` (mucho) | `0.20` |
+| `--sin-asistencia` | No perdonar los toques al borde de la tecla esperada | desactivado |
+| `--sin-acompanamiento` | Modos Ritmo y Demo sin bajo, acordes ni cascabeles | desactivado |
 | `--sin-camara` | Tocar solo con el teclado del PC | desactivado |
 | `--sin-espejo` | No voltear la imagen como un espejo | desactivado |
 | `--sin-sonido` | Ejecutar sin audio | desactivado |
 | `--pantalla-completa` | Abrir a pantalla completa | desactivado |
+| `--diagnostico` | Comprobar cámara, modelo y audio, y salir | — |
 | `--detalle` | Mostrar mensajes de diagnóstico en la consola | desactivado |
 
 Ejemplo:
 
 ```bash
+python -m piano_aereo --modo ritmo --dificultad facil
 python -m piano_aereo --modo demo --cancion completa --timbre campanas
 ```
 
@@ -141,13 +162,33 @@ Do–Sol y tocar el coro completo sin desplazar la mano.
 | Tecla | Modo | Descripción |
 |:-----:|------|-------------|
 | `1` | **Libre** | Piano sin restricciones. |
-| `2` | **Guía** | La tecla que corresponde se ilumina y la canción espera hasta que se toca la nota correcta. Registra aciertos, errores y racha, y al terminar muestra la precisión, el tiempo y de una a tres estrellas. |
-| `3` | **Demo** | La canción suena sola, a tempo, con las notas cayendo sobre el teclado. Sirve para aprenderla; se puede tocar encima. |
+| `2` | **Guía** | La tecla que corresponde se ilumina y la canción espera hasta que se toca la nota correcta. Registra aciertos, errores y racha, y al terminar muestra la precisión, el tiempo y de una a tres estrellas. Es el modo recomendado para aprender la canción. |
+| `3` | **Ritmo** | Como en *Guitar Hero*: tras una cuenta atrás, las notas caen a tempo con acompañamiento y hay que tocarlas cuando cruzan la línea de golpe. Puntúa con combo y multiplicador, y termina con una calificación de D a S. |
+| `4` | **Demo** | La canción suena sola, con acompañamiento. Sirve para escucharla; se puede tocar encima. |
+
+### Puntuación del modo Ritmo
+
+| Concepto | Regla |
+|----------|-------|
+| *Perfecto* | Nota tocada a ±0,12 s de su instante exacto (dificultad normal): 100 puntos |
+| *Bien* | Nota tocada a ±0,24 s: 60 puntos |
+| *Fallo* | Nota que se deja pasar: 0 puntos y el combo vuelve a cero |
+| Multiplicador | Sube un nivel cada 8 aciertos seguidos, hasta x4 |
+| Calificación | Según la precisión: S ≥ 95 %, A ≥ 85 %, B ≥ 70 %, C ≥ 50 %, D el resto |
+
+Tocar una tecla que no corresponde suena, pero no resta puntos. Las tolerancias
+son más amplias en dificultad fácil (±0,14 s y ±0,28 s) y más estrechas en
+difícil (±0,10 s y ±0,20 s).
+
+### Teclas
 
 | Tecla | Acción |
 |-------|--------|
 | `S` | Cambiar entre el coro y la canción completa |
+| `D` | Cambiar la dificultad (velocidad) de los modos Ritmo y Demo |
 | `T` | Cambiar el timbre |
+| `P` | Activar o quitar la pista de acompañamiento |
+| `A` | Activar o quitar la asistencia de puntería |
 | `+` / `-` | Aumentar / reducir la sensibilidad |
 | `R` | Reiniciar la canción |
 | `E` | Mostrar u ocultar el esqueleto de la mano |
@@ -226,6 +267,16 @@ La partitura se escribe como texto, una frase por línea, con el formato
 Está en Do mayor. Las diez teclas del teclado, de Sol3 a Si4, cubren
 exactamente el rango que necesitan la estrofa y el coro.
 
+El **modo Ritmo** compara el instante de cada toque con el instante exacto en
+que debía sonar la nota. Para que el juicio sea justo se corrigen dos retrasos:
+el de la cámara (el dedo se movió unos 50 ms antes de que llegara el fotograma)
+y el del audio (la pantalla se atrasa lo que tarda el sonido en salir por los
+altavoces, de modo que la nota cruza la línea justo cuando se oye el pulso).
+
+El **acompañamiento** se renderiza de una vez como una sola onda (cuenta atrás,
+bajo alternado, acordes y cascabeles; en Demo, también la melodía), por lo que
+todo queda sincronizado con precisión de muestra.
+
 ### 5. Interfaz — `interfaz.py` y `texto.py`
 
 Toda la escena se dibuja con OpenCV sobre la imagen de la cámara: carriles,
@@ -241,8 +292,8 @@ piano-aereo-jingle-bells/
 │   ├── vision.py         Cámara y MediaPipe en un hilo propio
 │   ├── toques.py         De los puntos de la mano a toques de piano
 │   ├── notas.py          Notas, frecuencias y geometría del teclado
-│   ├── sintetizador.py   Síntesis de notas y mezclador en tiempo real
-│   ├── canciones.py      Partitura de Jingle Bells; modos Guía y Demo
+│   ├── sintetizador.py   Síntesis de notas, acompañamiento y mezclador
+│   ├── canciones.py      Partitura de Jingle Bells; modos Guía, Ritmo y Demo
 │   ├── interfaz.py       Dibujo de la escena
 │   ├── texto.py          Texto con tildes sobre OpenCV
 │   ├── simulacion.py     Mano sintética para pruebas
@@ -263,7 +314,7 @@ python -m pip install pytest
 python -m pytest
 ```
 
-El proyecto incluye 26 pruebas que no requieren cámara ni altavoces. Una mano
+El proyecto incluye 35 pruebas que no requieren cámara ni altavoces. Una mano
 sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 
 - que cada uno de los cinco dedos puede pulsar y soltar una tecla;
@@ -273,8 +324,27 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 - que la partitura cabe en el teclado y cuadra en compases de 4/4;
 - que las ondas sintetizadas tienen la frecuencia correcta y no producen
   chasquidos;
-- de extremo a extremo, que se puede tocar el coro completo en modo Guía sin
-  errores.
+- que el modo Ritmo califica según la puntería y que el combo multiplica;
+- que el acompañamiento tiene un acorde por compás, no satura y entra a tempo;
+- de extremo a extremo, que se puede tocar el coro completo sin errores tanto en
+  modo Guía como en modo Ritmo.
+
+## Antes de una demostración
+
+1. Ejecutar el autodiagnóstico. Comprueba el modelo, que la cámara entrega
+   imagen (y que no está negra o tapada) y que hay salida de audio:
+
+   ```bash
+   python -m piano_aereo --diagnostico
+   ```
+
+2. Cerrar las aplicaciones que puedan estar usando la cámara (Zoom, Teams,
+   Meet, la app Cámara) y abrir la tapa de privacidad si el portátil la tiene.
+3. Sentarse con luz de frente, no a contraluz, y subir el volumen.
+4. Abrir la aplicación, pulsar `F` para pantalla completa y calentar con el modo
+   Guía (`2`) antes de pasar al modo Ritmo (`3`). Con `D` se elige la velocidad.
+5. Si la cámara fallara en el momento, la aplicación sigue funcionando: se puede
+   tocar con las teclas `Z X C V B N M , . /`.
 
 ## Solución de problemas
 
@@ -284,6 +354,9 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 | Cuesta que suenen las notas | Pulsar `+`. Doblar el dedo con un movimiento rápido y marcado. |
 | No detecta las manos | Mejorar la iluminación frontal, evitar contraluz y acercar la mano a 40–60 cm. |
 | Se abre otra cámara | Probar con `--camara 1` (o `2`). |
+| Aparece "La cámara da imagen negra" | Abrir la tapa de privacidad de la cámara o cerrar la aplicación que la esté usando. |
+| En modo Ritmo las notas van muy rápido | Pulsar `D` hasta la dificultad Fácil. |
+| Los toques caen en la tecla de al lado | Mantener la asistencia activada (`A`) y fijarse en la línea que baja de cada dedo. |
 | Aparece "Sin cámara" | Cerrar otras aplicaciones que la estén usando (Zoom, Teams, etc.). Mientras tanto se puede tocar con el teclado del PC. |
 | No hay sonido | Revisar el dispositivo de salida del sistema. Con `--detalle` se ve qué dispositivo de audio se abrió. |
 

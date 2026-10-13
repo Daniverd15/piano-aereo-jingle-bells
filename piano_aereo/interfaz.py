@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from . import config
-from .canciones import Cancion, Guia
+from .canciones import Cancion, Guia, Ritmo
 from .notas import Teclado, color, solfeo
 from .texto import escribir, medir
 from .toques import Lectura
@@ -20,28 +20,34 @@ Color = Tuple[int, int, int]
 BLANCO: Color = (255, 255, 255)
 TINTA: Color = (45, 35, 30)
 GRIS: Color = (190, 190, 190)
+APAGADO: Color = (95, 85, 80)
 FONDO_PANEL: Color = (28, 20, 16)
 DORADO: Color = (63, 210, 255)
+VERDE: Color = (120, 225, 90)
 ROJO: Color = (70, 70, 240)
 
-MODOS = (("1", "libre", "Libre"), ("2", "guia", "Guía"), ("3", "demo", "Demo"))
+MODOS = (("1", "libre", "Libre"), ("2", "guia", "Guía"), ("3", "ritmo", "Ritmo"), ("4", "demo", "Demo"))
+CARTELES = {"perfecto": ("¡Perfecto!", DORADO), "bien": ("Bien", VERDE), "fallo": ("Fallo", ROJO)}
+COLOR_NOTA = {"S": DORADO, "A": VERDE, "B": (241, 196, 46), "C": (28, 159, 255), "D": ROJO}
 
 AYUDA = (
     ("Cómo tocar", ""),
     ("", "Pon la mano frente a la cámara con los dedos estirados."),
     ("", "Muévela hasta que la punta del dedo quede sobre el carril de la tecla."),
     ("", "Dobla ese dedo, como si pulsaras la tecla, y estíralo para soltarla."),
+    ("Modos", ""),
+    ("1", "Libre: piano sin más"),
+    ("2", "Guía: la canción espera a que toques la nota correcta"),
+    ("3", "Ritmo: toca cada nota justo cuando llega al teclado y suma puntos"),
+    ("4", "Demo: la canción suena sola"),
     ("Teclas", ""),
-    ("1  2  3", "Modo libre · Guía (espera a que aciertes) · Demo (suena sola)"),
-    ("S", "Cambiar canción: coro o canción completa"),
-    ("T", "Cambiar timbre: piano, campanas, caja de música"),
-    ("+  -", "Más o menos sensibilidad al doblar el dedo"),
-    ("R", "Reiniciar la canción"),
-    ("E", "Mostrar u ocultar el esqueleto de la mano"),
-    ("F", "Pantalla completa"),
+    ("S   D", "Cambiar canción (coro / completa)  ·  Cambiar dificultad (velocidad)"),
+    ("T   P", "Cambiar timbre  ·  Pista de acompañamiento sí / no"),
+    ("+   -", "Más o menos sensibilidad al doblar el dedo"),
+    ("A", "Asistencia: perdona los toques que caen al borde de la tecla"),
+    ("R   F   E", "Reiniciar  ·  Pantalla completa  ·  Esqueleto de la mano"),
     ("Z X C V B N M , . /", "Tocar las diez teclas con el teclado del PC"),
-    ("H", "Mostrar u ocultar esta ayuda"),
-    ("Q  Esc", "Salir"),
+    ("H   Q", "Esta ayuda  ·  Salir"),
 )
 
 
@@ -79,6 +85,10 @@ def _estrella(img: np.ndarray, cx: float, cy: float, radio: float, tono: Color) 
     cv2.fillPoly(img, [np.array(puntos, dtype=np.int32)], tono, cv2.LINE_AA)
 
 
+def _miles(n: int) -> str:
+    return "{:,}".format(n).replace(",", " ")
+
+
 class Interfaz:
     """Dibuja cada capa de la escena sobre un lienzo BGR de ``ANCHO x ALTO``."""
 
@@ -86,8 +96,9 @@ class Interfaz:
         self.teclado = teclado
         self._chispas: List[List[float]] = []
         self._colores_chispa: List[Color] = []
-        azar = np.random.default_rng(7)
-        self._nieve = azar.random((70, 3))  # x, y y tamaño de cada copo, en 0..1
+        self._carteles: List[Tuple[str, Color, int, float]] = []
+        self._azar = np.random.default_rng(7)
+        self._nieve = self._azar.random((70, 3))  # x, y y tamaño de cada copo, en 0..1
         degradado = np.linspace(0.0, 1.0, config.ALTO)[:, None, None]
         arriba, abajo = np.array((70, 40, 24.0)), np.array((26, 16, 12.0))
         fondo = arriba + (abajo - arriba) * degradado
@@ -108,32 +119,55 @@ class Interfaz:
             centro = (int(x * config.ANCHO), int(y * self.teclado.y))
             cv2.circle(lienzo, centro, 1 + int(tam * 2.5), (235, 235, 235), -1, cv2.LINE_AA)
 
-    def carriles(self, lienzo: np.ndarray, objetivo: Optional[int]) -> None:
+    def carriles(self, lienzo: np.ndarray, objetivo: Optional[int], autopista: bool = False) -> None:
         t = self.teclado
+        if autopista:
+            # Oscurece la zona de juego para que las notas destaquen sobre la cámara.
+            caja(lienzo, t.x, config.PISTA_Y_MIN, t.x + t.ancho, t.y, (12, 8, 6), 0.32)
         if objetivo is not None:
             x0, _, x1, _ = t.rect(objetivo)
             caja(lienzo, x0, config.PISTA_Y_MIN, x1, t.y, color(t.notas[objetivo]), 0.13)
         for i in range(len(t) + 1):
             x = t.rect(min(i, len(t) - 1))[0 if i < len(t) else 2]
             caja(lienzo, x - 1, config.PISTA_Y_MIN, x + 1, t.y, BLANCO, 0.16)
+        if autopista:
+            # Línea de golpe: ahí hay que tocar la nota.
+            caja(lienzo, t.x, t.y - 9, t.x + t.ancho, t.y - 4, BLANCO, 0.85, 2)
 
     # ------------------------------------------------------------------ pista
-    def pista(self, lienzo: np.ndarray, cancion: Cancion, pulso: float, desde: int) -> None:
-        """Notas que caen hacia su tecla; la próxima descansa sobre el teclado."""
+    def pista(
+        self, lienzo: np.ndarray, cancion: Cancion, pulso: float, desde: int,
+        estados: Optional[Sequence[Optional[str]]] = None,
+    ) -> None:
+        """Notas que caen hacia su tecla y llegan a la línea de golpe en su pulso.
+
+        ``estados`` (modo Ritmo) oculta las notas acertadas y apaga las falladas.
+        """
         t = self.teclado
         px = config.PX_POR_PULSO
-        for nota in cancion.notas[desde:]:
-            base = t.y - (nota.inicio - pulso) * px
+        for i in range(desde, len(cancion.notas)):
+            nota = cancion.notas[i]
+            base = t.y - 6 - (nota.inicio - pulso) * px
             cima = base - nota.pulsos * px + 6
             if base <= config.PISTA_Y_MIN:
                 break
+            estado = estados[i] if estados is not None else None
+            if estado in ("perfecto", "bien"):
+                continue
             base, cima = min(base, t.y - 2), max(cima, config.PISTA_Y_MIN)
             if base - cima < 8:
                 continue
             x0, _, x1, _ = t.rect(t.indice(nota.nota))
-            caja(lienzo, x0 + 10, cima, x1 - 10, base, color(nota.nota), 0.85, 12)
-            if base - cima >= 28:
-                escribir(lienzo, nota.silaba.strip("-"), (x0 + x1) / 2, base - 27,
+            if estado == "fallo":
+                caja(lienzo, x0 + 10, cima, x1 - 10, base, APAGADO, 0.55, 12)
+                continue
+            # Gema: borde claro, cuerpo del color de la nota y brillo arriba.
+            caja(lienzo, x0 + 8, cima, x1 - 8, base, BLANCO, 0.9, 13)
+            caja(lienzo, x0 + 11, cima + 3, x1 - 11, base - 3, color(nota.nota), 1.0, 10)
+            if base - cima >= 20:
+                caja(lienzo, x0 + 16, cima + 6, x1 - 16, cima + 11, BLANCO, 0.45, 3)
+            if base - cima >= 30:
+                escribir(lienzo, nota.silaba.strip("-"), (x0 + x1) / 2, base - 29,
                          18, TINTA, "centro", True)
 
     # ---------------------------------------------------------------- teclado
@@ -148,7 +182,7 @@ class Interfaz:
     ) -> None:
         t = self.teclado
         pulsadas = set(pulsadas)
-        caja(lienzo, 0, t.y - 6, config.ANCHO, config.ALTO, FONDO_PANEL, 0.55)
+        caja(lienzo, 0, t.y - 3, config.ANCHO, config.ALTO, FONDO_PANEL, 0.55)
         for i, nota in enumerate(t.notas):
             x0, y0, x1, y1 = t.rect(i)
             x0, x1 = x0 + 3, x1 - 3
@@ -205,14 +239,13 @@ class Interfaz:
                     cv2.ellipse(lienzo, (x, y), (15, 15), -90, 0, 360 * lectura.progreso,
                                 BLANCO, 3, cv2.LINE_AA)
 
-    # ---------------------------------------------------------------- chispas
-    def chispear(self, tecla: int) -> None:
+    # ------------------------------------------------------- chispas y carteles
+    def chispear(self, tecla: int, cantidad: int = 12) -> None:
         t = self.teclado
-        azar = np.random.default_rng()
-        for _ in range(12):
-            angulo = azar.uniform(-math.pi * 0.85, -math.pi * 0.15)
-            rapidez = azar.uniform(160, 420)
-            self._chispas.append([t.centro(tecla) + azar.uniform(-30, 30), t.y,
+        for _ in range(cantidad):
+            angulo = self._azar.uniform(-math.pi * 0.85, -math.pi * 0.15)
+            rapidez = self._azar.uniform(160, 420) * (1.0 + cantidad / 40.0)
+            self._chispas.append([t.centro(tecla) + self._azar.uniform(-30, 30), t.y,
                                   rapidez * math.cos(angulo), rapidez * math.sin(angulo), 0.5])
             self._colores_chispa.append(color(t.notas[tecla]))
 
@@ -230,21 +263,44 @@ class Interfaz:
                 colores.append(tono)
         self._chispas, self._colores_chispa = vivas, colores
 
+    def cartel(self, tecla: int, grado: str, ahora: float) -> None:
+        """Anuncia sobre una tecla cómo se tocó la nota (Perfecto, Bien, Fallo)."""
+        cadena, tono = CARTELES[grado]
+        x = self.teclado.centro(tecla)
+        # Un cartel nuevo sustituye al que hubiera en la misma tecla, para no encimarlos.
+        self._carteles = [c for c in self._carteles if c[2] != x]
+        self._carteles.append((cadena, tono, x, ahora))
+
+    def carteles(self, lienzo: np.ndarray, ahora: float) -> None:
+        duracion = 0.7
+        self._carteles = [c for c in self._carteles if ahora - c[3] < duracion]
+        for cadena, tono, x, t0 in self._carteles:
+            avance = (ahora - t0) / duracion
+            ancho, alto = medir(cadena, 24, True)
+            y = self.teclado.y - 58 - 50 * avance
+            opacidad = min(1.0, 2.0 * (1.0 - avance))
+            caja(lienzo, x - ancho / 2 - 12, y - 3, x + ancho / 2 + 12, y + alto + 4,
+                 FONDO_PANEL, 0.8 * opacidad, 16)
+            escribir(lienzo, cadena, x, y, 24, tono, "centro", True, opacidad)
+
+    def limpiar_efectos(self) -> None:
+        self._chispas, self._colores_chispa, self._carteles = [], [], []
+
     # -------------------------------------------------------------------- HUD
     def barra(self, lienzo: np.ndarray, modo: str, detalle: str, progreso: Optional[float]) -> None:
         caja(lienzo, 0, 0, config.ANCHO, 60, FONDO_PANEL, 0.78)
         escribir(lienzo, "Piano Aéreo", 20, 13, 25, BLANCO, negrita=True)
-        x = 190
+        x = 184
         for tecla, identificador, nombre in MODOS:
             etiqueta = "%s  %s" % (tecla, nombre)
-            ancho = medir(etiqueta, 17, True)[0] + 28
+            ancho = medir(etiqueta, 17, True)[0] + 26
             activo = identificador == modo
             caja(lienzo, x, 13, x + ancho, 47, DORADO if activo else (80, 68, 60), 1.0, 16)
-            escribir(lienzo, etiqueta, x + 14, 18, 17, TINTA if activo else BLANCO, negrita=True)
-            x += ancho + 10
+            escribir(lienzo, etiqueta, x + 13, 18, 17, TINTA if activo else BLANCO, negrita=True)
+            x += ancho + 8
         escribir(lienzo, detalle, config.ANCHO - 20, 9, 16, BLANCO, "der")
-        escribir(lienzo, "H ayuda  ·  S canción  ·  T timbre  ·  Q salir", config.ANCHO - 20, 33,
-                 13, GRIS, "der")
+        escribir(lienzo, "H ayuda  ·  S canción  ·  D dificultad  ·  T timbre  ·  Q salir",
+                 config.ANCHO - 20, 33, 13, GRIS, "der")
         if progreso is not None:
             caja(lienzo, 0, 60, config.ANCHO, 65, (60, 50, 45), 0.8)
             caja(lienzo, 0, 60, config.ANCHO * min(max(progreso, 0.0), 1.0), 65, DORADO)
@@ -271,17 +327,37 @@ class Interfaz:
                 caja(lienzo, x, 108, x + ancho, 111, BLANCO, 1.0, 1)
             x += ancho + (0 if silaba.endswith("-") else espacio)
 
-    def marcador(self, lienzo: np.ndarray, guia: Guia) -> None:
-        cadena = "Aciertos %d/%d   ·   Errores %d   ·   Racha %d" % (
-            guia.aciertos, len(guia.cancion), guia.errores, guia.racha)
+    def _pastilla(self, lienzo: np.ndarray, cadena: str) -> None:
         ancho = medir(cadena, 16)[0]
         caja(lienzo, 14, 76, 14 + ancho + 28, 110, FONDO_PANEL, 0.72, 17)
         escribir(lienzo, cadena, 28, 82, 16, BLANCO)
 
+    def marcador(self, lienzo: np.ndarray, guia: Guia) -> None:
+        self._pastilla(lienzo, "Aciertos %d/%d   ·   Errores %d   ·   Racha %d" % (
+            guia.aciertos, len(guia.cancion), guia.errores, guia.racha))
+
+    def marcador_ritmo(self, lienzo: np.ndarray, ritmo: Ritmo) -> None:
+        self._pastilla(lienzo, "Puntos %s   ·   Aciertos %d/%d" % (
+            _miles(ritmo.puntos), ritmo.aciertos, len(ritmo.cancion)))
+        # Combo y multiplicador, grandes, a la derecha.
+        x = config.ANCHO - 96
+        caja(lienzo, x - 78, 76, x + 78, 196, FONDO_PANEL, 0.72, 22)
+        escribir(lienzo, str(ritmo.combo), x, 76, 52, BLANCO if ritmo.combo else GRIS, "centro", True)
+        escribir(lienzo, "COMBO", x, 138, 14, GRIS, "centro", True)
+        nivel = ritmo.multiplicador
+        tono = (GRIS, VERDE, (241, 196, 46), DORADO)[nivel - 1]
+        escribir(lienzo, "x%d" % nivel, x, 158, 26, tono, "centro", True)
+        if nivel < 4:  # barra de avance hacia el siguiente multiplicador
+            avance = (ritmo.combo % ritmo.COMBO_POR_NIVEL) / float(ritmo.COMBO_POR_NIVEL)
+            caja(lienzo, x - 56, 190, x + 56, 193, APAGADO, 1.0, 1)
+            caja(lienzo, x - 56, 190, x - 56 + 112 * avance, 193, tono, 1.0, 1)
+
     def aviso(self, lienzo: np.ndarray, cadena: str, y: int = 74, tam: int = 22) -> None:
         ancho, alto = medir(cadena, tam, True)
         x = (config.ANCHO - ancho) / 2
-        caja(lienzo, x - 24, y - 4, x + ancho + 24, y + alto + 6, FONDO_PANEL, 0.78, 20)
+        margen = max(24, tam // 2)
+        caja(lienzo, x - margen, y - 4, x + ancho + margen, y + alto + 6, FONDO_PANEL, 0.78,
+             min(40, (alto + 10) // 2))
         escribir(lienzo, cadena, x, y, tam, BLANCO, negrita=True)
 
     def panel_final(self, lienzo: np.ndarray, guia: Guia, ahora: float) -> None:
@@ -289,24 +365,47 @@ class Interfaz:
         caja(lienzo, cx - 290, cy - 150, cx + 290, cy + 150, FONDO_PANEL, 0.92, 26)
         escribir(lienzo, "¡Canción completada!", cx, cy - 128, 36, BLANCO, "centro", True)
         for k in range(3):
-            tono = DORADO if k < guia.estrellas else (95, 85, 80)
-            _estrella(lienzo, cx + (k - 1) * 84, cy - 28, 34, tono)
+            _estrella(lienzo, cx + (k - 1) * 84, cy - 28, 34, DORADO if k < guia.estrellas else APAGADO)
         resumen = "Precisión %d %%   ·   Tiempo %d s   ·   Mejor racha %d" % (
             round(guia.precision * 100), round(guia.duracion(ahora)), guia.mejor_racha)
         escribir(lienzo, resumen, cx, cy + 36, 21, BLANCO, "centro")
-        escribir(lienzo, "R  repetir     ·     S  otra canción     ·     1  modo libre",
+        escribir(lienzo, "R  repetir     ·     S  otra canción     ·     3  modo ritmo",
                  cx, cy + 92, 17, GRIS, "centro")
 
+    def panel_final_ritmo(self, lienzo: np.ndarray, ritmo: Ritmo) -> None:
+        cx, cy = config.ANCHO // 2, 310
+        caja(lienzo, cx - 330, cy - 180, cx + 330, cy + 180, FONDO_PANEL, 0.93, 26)
+        escribir(lienzo, "¡Canción terminada!", cx, cy - 162, 34, BLANCO, "centro", True)
+        # Calificación en grande a la izquierda.
+        letra = ritmo.calificacion
+        tono = COLOR_NOTA[letra]
+        cv2.circle(lienzo, (cx - 215, cy - 20), 68, tono, -1, cv2.LINE_AA)
+        escribir(lienzo, letra, cx - 215, cy - 78, 88, TINTA, "centro", True)
+        for k in range(5):
+            _estrella(lienzo, cx - 40 + k * 62, cy - 62, 25, DORADO if k < ritmo.estrellas else APAGADO)
+        escribir(lienzo, "%s puntos" % _miles(ritmo.puntos), cx + 84, cy - 22, 34, BLANCO, "centro", True)
+        escribir(lienzo, "Precisión %d %%   ·   Mejor combo %d" % (
+            round(ritmo.precision * 100), ritmo.mejor_combo), cx + 84, cy + 30, 19, BLANCO, "centro")
+        x = cx - 250
+        for grado, etiqueta in (("perfecto", "Perfectas"), ("bien", "Bien"), ("fallo", "Falladas")):
+            tono = CARTELES[grado][1]
+            cv2.circle(lienzo, (x, cy + 97), 7, tono, -1, cv2.LINE_AA)
+            x += 16 + escribir(lienzo, "%s  %d" % (etiqueta, ritmo.conteo[grado]), x + 16, cy + 84, 20, BLANCO)
+            x += 44
+        escribir(lienzo, "R  repetir     ·     D  dificultad     ·     S  otra canción",
+                 cx, cy + 138, 17, GRIS, "centro")
+
     def ayuda(self, lienzo: np.ndarray) -> None:
-        x0, y0, x1 = 250, 84, config.ANCHO - 250
-        caja(lienzo, x0, y0, x1, y0 + 34 + 30 * len(AYUDA), FONDO_PANEL, 0.93, 24)
-        y = y0 + 18
+        x0, y0, x1 = 230, 78, config.ANCHO - 230
+        paso = 29
+        caja(lienzo, x0, y0, x1, y0 + 30 + paso * len(AYUDA), FONDO_PANEL, 0.94, 24)
+        y = y0 + 16
         for tecla, descripcion in AYUDA:
             if not descripcion:
-                escribir(lienzo, tecla, x0 + 30, y, 20, DORADO, negrita=True)
+                escribir(lienzo, tecla, x0 + 30, y, 19, DORADO, negrita=True)
             elif not tecla:
-                escribir(lienzo, descripcion, x0 + 30, y + 2, 17, BLANCO)
+                escribir(lienzo, descripcion, x0 + 30, y + 2, 16, BLANCO)
             else:
-                escribir(lienzo, tecla, x0 + 30, y + 2, 17, BLANCO, negrita=True)
-                escribir(lienzo, descripcion, x0 + 220, y + 2, 17, (215, 215, 215))
-            y += 30
+                escribir(lienzo, tecla, x0 + 30, y + 2, 16, BLANCO, negrita=True)
+                escribir(lienzo, descripcion, x0 + 220, y + 2, 16, (215, 215, 215))
+            y += paso

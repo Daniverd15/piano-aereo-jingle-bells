@@ -64,6 +64,11 @@ class Teclado:
             return None
         return min(int((x - self.x) / self.ancho_tecla), len(self.notas) - 1)
 
+    def distancia(self, i: int, x: float) -> float:
+        """Píxeles que separan ``x`` del carril de la tecla ``i`` (0 si está dentro)."""
+        x0 = self.x + i * self.ancho_tecla
+        return max(x0 - x, x - (x0 + self.ancho_tecla), 0.0)
+
     def indice(self, nota: str) -> int:
         return self.notas.index(nota)
 
