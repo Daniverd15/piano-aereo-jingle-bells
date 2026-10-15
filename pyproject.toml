@@ -1,6 +1,6 @@
 [project]
 name = "piano-aereo"
-version = "1.0.0"
+version = "1.2.0"
 description = "Toca Jingle Bells en el aire: la cámara del portátil detecta tus dedos como en un piano."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -9,7 +9,7 @@ authors = [{ name = "Daniel Enrique Villamizar Ramírez" }]
 dependencies = ["mediapipe>=0.10.14", "numpy", "sounddevice", "Pillow"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "matplotlib"]
 
 [project.scripts]
 piano-aereo = "piano_aereo.app:main"

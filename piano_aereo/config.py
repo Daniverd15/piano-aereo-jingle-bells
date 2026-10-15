@@ -25,10 +25,11 @@ TECLADO_ALTO = 164
 TECLAS_PC = "zxcvbnm,./"
 
 # ------------------------------------------------------- detección de toques
-SENSIBILIDAD = 0.20  # caída relativa del dedo que dispara la nota
+# Umbral y suavizado elegidos con scripts/evaluar_detector.py (ver docs/INFORME.md).
+SENSIBILIDAD = 0.22  # caída relativa del dedo que dispara la nota
 SENSIBILIDAD_MIN, SENSIBILIDAD_MAX = 0.10, 0.40
 SOLTAR = 0.5  # la nota se suelta al volver por debajo de umbral * SOLTAR
-SUAVIZADO = 0.6  # peso de la medida nueva en el filtro exponencial
+SUAVIZADO = 0.8  # peso de la medida nueva en el filtro exponencial
 TAU_REPOSO = 2.5  # s que tarda la referencia de "dedo estirado" en adaptarse
 DOMINANCIA = 0.6  # un dedo arrastrado por su vecino no dispara
 REBOTE = 0.07  # s mínimos entre dos cambios del mismo dedo
@@ -36,6 +37,8 @@ CALENTAMIENTO = 0.3  # s que debe verse una mano antes de poder tocar
 GRACIA = 0.25  # s que se tolera perder la mano sin soltar las notas
 RAPIDEZ_MAX = 3.0  # palmas/s: por encima la mano se está desplazando
 SOSTENIDO_MAX = 5.0  # s máximos con un dedo pulsado
+CAMBIO_POSTURA = 4  # dedos que se acortan a la vez: es la mano entera, no un toque
+MODO_COMUN = True  # restar a cada dedo el movimiento común de los demás
 
 # ------------------------------------------------------------------ audio
 FRECUENCIA_MUESTREO = 44_100

@@ -33,12 +33,13 @@ modo de ritmo al estilo de *Guitar Hero*, con notas que caen, combos y puntuaci�
 5. [Cómo se toca](#cómo-se-toca)
 6. [Modos y controles](#modos-y-controles)
 7. [Cómo funciona](#cómo-funciona)
-8. [Estructura del proyecto](#estructura-del-proyecto)
-9. [Pruebas](#pruebas)
-10. [Antes de una demostración](#antes-de-una-demostración)
-11. [Solución de problemas](#solución-de-problemas)
-12. [Limitaciones](#limitaciones)
-13. [Créditos y licencia](#créditos-y-licencia)
+8. [Evaluación del detector](#evaluación-del-detector)
+9. [Estructura del proyecto](#estructura-del-proyecto)
+10. [Pruebas](#pruebas)
+11. [Antes de una demostración](#antes-de-una-demostración)
+12. [Solución de problemas](#solución-de-problemas)
+13. [Limitaciones](#limitaciones)
+14. [Créditos y licencia](#créditos-y-licencia)
 
 ---
 
@@ -52,9 +53,13 @@ piano, usando únicamente Python.
 
 - **Teclado de piano en pantalla.** Diez teclas blancas (Sol3 a Si4). Cualquier
   dedo de cualquiera de las dos manos puede tocar cualquier tecla, mantener
-  notas y formar acordes.
+  notas y formar acordes de dos dedos por mano.
 - **Detección de toques sin calibración.** El sistema aprende solo cómo es cada
   dedo estirado y se adapta a la distancia y a la postura de la mano.
+- **Detector evaluado con datos.** Sesiones sintéticas etiquetadas miden
+  precisión, sensibilidad, F1 y latencia; el umbral y el suavizado se eligieron
+  con esas medidas. F1 = 0,96 con 1,3 notas fantasma por minuto
+  ([informe técnico](docs/INFORME.md)).
 - **Cuatro modos de uso:** Libre, Guía (la canción espera a que se acierte cada
   nota), Ritmo (estilo *Guitar Hero*) y Demo (la canción suena sola).
 - **Modo Ritmo.** Las notas caen a tempo hacia el teclado y hay que tocarlas al
@@ -73,6 +78,11 @@ piano, usando únicamente Python.
   segundo y salida de audio de baja latencia.
 - **Ayudas visuales.** Cada punta de dedo muestra una línea hacia la tecla que
   tocaría y un arco que indica cuánto falta para que suene.
+- **Grabación de la interpretación.** Con `G` se graba vídeo (`.mp4`) y audio
+  (`.wav`) para entregarlo como evidencia; con `I`, una captura de pantalla.
+- **Pensada para no fallar en directo.** La cámara y el audio se reconectan
+  solos si se pierden, un error inesperado se salta un fotograma en lugar de
+  cerrar la ventana y todo queda anotado en `piano_aereo.log`.
 - **Autodiagnóstico** (`--diagnostico`) que comprueba cámara, modelo y audio
   antes de una presentación.
 - **Pruebas automáticas** que verifican el recorrido completo sin necesidad de
@@ -127,7 +137,7 @@ aplicación lo descarga automáticamente al arrancar.
 | `--dificultad {facil,normal,dificil}` | Velocidad de los modos Ritmo y Demo (84, 108 o 132 pulsos por minuto) | `normal` |
 | `--timbre {piano,campanas,cajita}` | Sonido del instrumento | `piano` |
 | `--camara N` | Índice de la cámara | `0` |
-| `--sensibilidad X` | Cuánto hay que doblar el dedo, de `0.10` (poco) a `0.40` (mucho) | `0.20` |
+| `--sensibilidad X` | Cuánto hay que doblar el dedo, de `0.10` (poco) a `0.40` (mucho) | `0.22` |
 | `--sin-asistencia` | No perdonar los toques al borde de la tecla esperada | desactivado |
 | `--sin-acompanamiento` | Modos Ritmo y Demo sin bajo, acordes ni cascabeles | desactivado |
 | `--sin-camara` | Tocar solo con el teclado del PC | desactivado |
@@ -193,6 +203,8 @@ difícil (±0,10 s y ±0,20 s).
 | `R` | Reiniciar la canción |
 | `E` | Mostrar u ocultar el esqueleto de la mano |
 | `F` | Pantalla completa |
+| `G` | Empezar / terminar la grabación de vídeo y audio |
+| `I` | Guardar una captura de pantalla |
 | `H` | Ayuda en pantalla |
 | `Z X C V B N M , . /` | Tocar las diez teclas con el teclado del PC |
 | `Q` / `Esc` | Salir |
@@ -229,9 +241,10 @@ lejos de la cámara. Sobre esa señal se aplican varias reglas:
 | Mecanismo | Problema que resuelve |
 |-----------|-----------------------|
 | **Referencia adaptativa** | Cada dedo guarda su extensión "en reposo", que sube rápido y baja despacio. Un toque (brusco) destaca; un cambio lento de postura se absorbe. No hace falta calibrar. |
-| **Histéresis** | La nota se activa cuando el dedo se acorta un 20 % y solo se suelta al recuperar la mitad, lo que evita parpadeos en el umbral. |
+| **Rechazo de modo común** | A la caída de cada dedo se le resta la mediana de la de los demás. Si la mano entera se cierra o se relaja, todos bajan a la vez y no suena nada; si baja un solo dedo, sí. Es el mecanismo que más notas fantasma evita. |
+| **Histéresis** | La nota se activa cuando el dedo se acorta un 22 % y solo se suelta al recuperar la mitad, lo que evita parpadeos en el umbral. |
 | **Filtro de dominancia** | Al doblar un dedo, los vecinos se mueven un poco. Un dedo solo suena si su caída es comparable a la del que más ha bajado. |
-| **Detección de cambio de postura** | Si cuatro o más dedos se acortan a la vez, la mano se está cerrando o inclinando: no se interpreta como toque. |
+| **Detección de cambio de postura** | Si cuatro o más dedos se acortan a la vez, se toma como la nueva postura de reposo. |
 | **Antirrebote y calentamiento** | Tiempo mínimo entre dos cambios del mismo dedo, y una mano recién aparecida no puede tocar hasta estabilizarse. |
 | **Dinámica** | La velocidad con que baja el dedo determina el volumen de la nota. |
 | **Elección de tecla** | Se usa la posición de la punta *antes* de doblarse, porque al doblar el dedo la punta se desplaza. |
@@ -283,6 +296,47 @@ Toda la escena se dibuja con OpenCV sobre la imagen de la cámara: carriles,
 notas que caen, teclado, manos, letra y paneles. Como OpenCV solo dibuja
 caracteres ASCII, los textos se rasterizan con Pillow y se guardan en caché.
 
+## Evaluación del detector
+
+Como no existe un conjunto de datos público de "toques de piano en el aire", el
+proyecto incluye un generador de sesiones sintéticas **etiquetadas**. Una mano
+simulada toca teclas y, a la vez, hace todo lo que *no* debería sonar:
+
+- arrastrar el dedo vecino;
+- cambiar de postura despacio;
+- inclinar la muñeca o cerrar la mano;
+- desplazarse entre teclas;
+- acercarse y alejarse de la cámara.
+
+Todo con ruido como el temblor de los puntos de MediaPipe. Como se sabe cuándo
+empezó cada toque real, se miden precisión, sensibilidad, F1 y latencia.
+
+```bash
+python -m pip install -r requirements-dev.txt
+python scripts/evaluar_detector.py
+```
+
+![Evaluación del detector](docs/evaluacion.png)
+
+Resultados principales (6 sesiones de un minuto, 295 toques):
+
+| Detector | Precisión | Sensibilidad | F1 | Latencia | Notas fantasma |
+|---|---:|---:|---:|---:|---:|
+| Sin rechazo de modo común | 0,785 | 0,966 | 0,866 | 75 ms | 13,0 /min |
+| **Final (umbral 0,22, suavizado 0,8)** | **0,972** | **0,949** | **0,961** | **89 ms** | **1,3 /min** |
+
+- La evaluación descubrió que al cerrar o relajar la mano salían notas
+  fantasma; el **rechazo de modo común** lo resolvió.
+- El umbral y el suavizado se eligieron comparando calidad, latencia y
+  robustez ante el ruido y ante toques suaves.
+- El estudio de ablación mide cuánto aporta cada mecanismo.
+
+Análisis completo en el [informe técnico](docs/INFORME.md) y tablas en
+[RESULTADOS_EVALUACION.md](docs/RESULTADOS_EVALUACION.md).
+
+> Los datos son sintéticos: sirven para comparar variantes y elegir parámetros
+> con criterio, no garantizan las mismas cifras con cualquier mano real.
+
 ## Estructura del proyecto
 
 ```
@@ -295,26 +349,34 @@ piano-aereo-jingle-bells/
 │   ├── sintetizador.py   Síntesis de notas, acompañamiento y mezclador
 │   ├── canciones.py      Partitura de Jingle Bells; modos Guía, Ritmo y Demo
 │   ├── interfaz.py       Dibujo de la escena
+│   ├── grabacion.py      Grabación de vídeo, audio y capturas
 │   ├── texto.py          Texto con tildes sobre OpenCV
-│   ├── simulacion.py     Mano sintética para pruebas
+│   ├── simulacion.py     Mano sintética para pruebas y evaluación
 │   └── config.py         Constantes ajustables
 ├── modelos/              Modelo de manos de MediaPipe
 ├── tests/                Pruebas automáticas (pytest)
-├── scripts/              Generador de la captura de pantalla
-├── docs/                 Imágenes de la documentación
+├── scripts/
+│   ├── evaluar_detector.py   Evaluación cuantitativa del detector
+│   └── generar_captura.py    Capturas de pantalla de la documentación
+├── docs/
+│   ├── INFORME.md                  Informe técnico
+│   ├── RESULTADOS_EVALUACION.md    Tablas de la evaluación
+│   └── *.png                       Gráfico de evaluación y capturas
+├── CHANGELOG.md          Registro de cambios
 ├── ejecutar.bat          Instalación y arranque en Windows
 ├── main.py               Atajo: python main.py
-└── requirements.txt
+├── requirements.txt      Dependencias de la aplicación
+└── requirements-dev.txt  Dependencias para pruebas y evaluación
 ```
 
 ## Pruebas
 
 ```bash
-python -m pip install pytest
+python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-El proyecto incluye 35 pruebas que no requieren cámara ni altavoces. Una mano
+El proyecto incluye 45 pruebas que no requieren cámara ni altavoces. Una mano
 sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 
 - que cada uno de los cinco dedos puede pulsar y soltar una tecla;
@@ -327,7 +389,11 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 - que el modo Ritmo califica según la puntería y que el combo multiplica;
 - que el acompañamiento tiene un acorde por compás, no satura y entra a tempo;
 - de extremo a extremo, que se puede tocar el coro completo sin errores tanto en
-  modo Guía como en modo Ritmo.
+  modo Guía como en modo Ritmo;
+- que la calidad del detector en una sesión sintética no empeora (F1 ≥ 0,94);
+- que la aplicación **no se cae**: la cámara que no abre o se desconecta se
+  reconecta sola, el audio perdido se reabre, un error al dibujar no cierra la
+  ventana, y la grabación produce vídeo y audio sincronizados.
 
 ## Antes de una demostración
 
@@ -343,8 +409,11 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 3. Sentarse con luz de frente, no a contraluz, y subir el volumen.
 4. Abrir la aplicación, pulsar `F` para pantalla completa y calentar con el modo
    Guía (`2`) antes de pasar al modo Ritmo (`3`). Con `D` se elige la velocidad.
-5. Si la cámara fallara en el momento, la aplicación sigue funcionando: se puede
-   tocar con las teclas `Z X C V B N M , . /`.
+5. Para dejar evidencia, pulsar `G` antes de tocar y otra vez al terminar: el
+   vídeo y el audio quedan en `grabaciones/`.
+6. Si la cámara fallara en el momento, la aplicación sigue funcionando y la
+   reintenta sola cada dos segundos. Mientras tanto se puede tocar con las
+   teclas `Z X C V B N M , . /`.
 
 ## Solución de problemas
 
@@ -358,7 +427,9 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 | En modo Ritmo las notas van muy rápido | Pulsar `D` hasta la dificultad Fácil. |
 | Los toques caen en la tecla de al lado | Mantener la asistencia activada (`A`) y fijarse en la línea que baja de cada dedo. |
 | Aparece "Sin cámara" | Cerrar otras aplicaciones que la estén usando (Zoom, Teams, etc.). Mientras tanto se puede tocar con el teclado del PC. |
-| No hay sonido | Revisar el dispositivo de salida del sistema. Con `--detalle` se ve qué dispositivo de audio se abrió. |
+| No hay sonido | Revisar el dispositivo de salida del sistema. Si se desconectan unos audífonos, el sonido se reabre solo en unos segundos en el nuevo dispositivo. |
+| La grabación no tiene sonido dentro del vídeo | OpenCV no puede meter audio en el `.mp4`: el audio está en el `.wav` del mismo nombre y se unen en cualquier editor (por ejemplo, Clipchamp en Windows). |
+| Algo raro pasó durante el uso | Revisar `piano_aereo.log`, que registra la cámara, el audio y cualquier error de la última sesión. |
 
 ## Limitaciones
 
@@ -367,6 +438,10 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 - La detección depende de la iluminación y de que la mano se vea completa.
 - Los toques se detectan mejor con la palma hacia la cámara; con la mano de
   perfil la longitud aparente de los dedos cambia menos.
+- Como mucho dos dedos a la vez por mano: los acordes de tres dedos o más se
+  confunden con cerrar la mano.
+- La evaluación usa datos sintéticos; el siguiente paso sería repetirla con
+  sesiones reales etiquetadas.
 - Desarrollado y probado en Windows 11 con Python 3.13. El código mantiene
   sintaxis compatible con Python 3.9, pero no se ha ejecutado en esa versión.
 

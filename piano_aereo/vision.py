@@ -8,6 +8,7 @@ fotograma más reciente.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -19,6 +20,10 @@ import cv2
 import numpy as np
 
 from . import config
+
+# Silencia los avisos internos de MediaPipe/TensorFlow en la consola.
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +104,15 @@ class Cuadro:
 
 
 class Vision(threading.Thread):
-    """Hilo que captura la cámara, la pone en espejo y localiza las manos."""
+    """Hilo que captura la cámara, la pone en espejo y localiza las manos.
+
+    Si la cámara no abre, deja de enviar imagen o se desconecta, el hilo no
+    muere: anota el problema en ``error`` y vuelve a intentarlo cada pocos
+    segundos. En cuanto la cámara responde, ``error`` vuelve a ``None``.
+    """
+
+    REINTENTO = 2.0  # s entre intentos de reabrir la cámara
+    FALLOS_SEGUIDOS = 60  # lecturas fallidas seguidas antes de reabrir
 
     def __init__(self, camara: int = 0, espejo: bool = True) -> None:
         super().__init__(name="vision", daemon=True)
@@ -114,26 +127,51 @@ class Vision(threading.Thread):
         self._parar = threading.Event()
 
     def run(self) -> None:
-        captura = None
-        rastreador = None
         try:
             rastreador = Rastreador()
-            # DirectShow abre la cámara mucho más rápido en Windows y entrega
-            # siempre el último fotograma, sin acumular retraso.
-            api = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        except Exception as exc:  # sin modelo no hay nada que reintentar
+            log.exception("No se pudo cargar el detector de manos")
+            self.error = "no se pudo cargar el detector de manos: %s" % exc
+            return
+        try:
+            while not self._parar.is_set():
+                try:
+                    self._capturar(rastreador)
+                except Exception as exc:
+                    log.warning("Cámara: %s. Reintentando en %.0f s", exc, self.REINTENTO)
+                    self.error, self.lista = str(exc), False
+                    self._parar.wait(self.REINTENTO)
+        finally:
+            rastreador.cerrar()
+
+    def _abrir(self):
+        """Abre la cámara probando los controladores disponibles."""
+        # DirectShow abre mucho más rápido en Windows y entrega siempre el
+        # último fotograma; Media Foundation queda de respaldo.
+        apis = (cv2.CAP_DSHOW, cv2.CAP_MSMF) if sys.platform == "win32" else (cv2.CAP_ANY,)
+        for api in apis:
             captura = cv2.VideoCapture(self.camara, api)
-            if not captura.isOpened():
-                raise RuntimeError("No se pudo abrir la cámara %d" % self.camara)
-            captura.set(cv2.CAP_PROP_FRAME_WIDTH, config.ANCHO)
-            captura.set(cv2.CAP_PROP_FRAME_HEIGHT, config.ALTO)
-            captura.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if captura.isOpened():
+                captura.set(cv2.CAP_PROP_FRAME_WIDTH, config.ANCHO)
+                captura.set(cv2.CAP_PROP_FRAME_HEIGHT, config.ALTO)
+                captura.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                ok, _ = captura.read()
+                if ok:
+                    log.info("Cámara %d abierta (controlador %s)", self.camara, captura.getBackendName())
+                    return captura
+            captura.release()
+        raise RuntimeError("no se pudo abrir la cámara %d" % self.camara)
+
+    def _capturar(self, rastreador: Rastreador) -> None:
+        captura = self._abrir()
+        try:
             numero, fallos, anterior = 0, 0, time.perf_counter()
             while not self._parar.is_set():
                 ok, cuadro = captura.read()
                 if not ok or cuadro is None:
                     fallos += 1
-                    if fallos > 60:
-                        raise RuntimeError("La cámara dejó de enviar imagen")
+                    if fallos > self.FALLOS_SEGUIDOS:
+                        raise RuntimeError("la cámara dejó de enviar imagen")
                     time.sleep(0.01)
                     continue
                 fallos = 0
@@ -149,15 +187,9 @@ class Vision(threading.Thread):
                 ahora = time.perf_counter()
                 self.fps = 0.9 * self.fps + 0.1 / max(ahora - anterior, 1e-3)
                 anterior = ahora
-                self.lista = True
-        except Exception as exc:
-            log.warning("Visión detenida: %s", exc)
-            self.error = str(exc)
+                self.error, self.lista = None, True
         finally:
-            if captura is not None:
-                captura.release()
-            if rastreador is not None:
-                rastreador.cerrar()
+            captura.release()
 
     @property
     def oscura(self) -> bool:
@@ -174,4 +206,4 @@ class Vision(threading.Thread):
     def detener(self) -> None:
         self._parar.set()
         if self.is_alive():
-            self.join(timeout=2.0)
+            self.join(timeout=3.0)

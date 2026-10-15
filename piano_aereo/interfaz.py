@@ -46,6 +46,7 @@ AYUDA = (
     ("+   -", "Más o menos sensibilidad al doblar el dedo"),
     ("A", "Asistencia: perdona los toques que caen al borde de la tecla"),
     ("R   F   E", "Reiniciar  ·  Pantalla completa  ·  Esqueleto de la mano"),
+    ("G   I", "Grabar vídeo y audio  ·  Guardar captura de pantalla"),
     ("Z X C V B N M , . /", "Tocar las diez teclas con el teclado del PC"),
     ("H   Q", "Esta ayuda  ·  Salir"),
 )
@@ -394,6 +395,16 @@ class Interfaz:
             x += 44
         escribir(lienzo, "R  repetir     ·     D  dificultad     ·     S  otra canción",
                  cx, cy + 138, 17, GRIS, "centro")
+
+    def indicador_grabacion(self, lienzo: np.ndarray, segundos: float, ahora: float) -> None:
+        """Punto rojo parpadeante y tiempo grabado (no aparece en el propio vídeo)."""
+        cadena = "REC  %d:%02d" % (segundos // 60, segundos % 60)
+        ancho = medir(cadena, 16, True)[0]
+        x0, y0 = config.ANCHO - ancho - 70, config.ALTO - 44
+        caja(lienzo, x0, y0, config.ANCHO - 16, y0 + 32, FONDO_PANEL, 0.85, 16)
+        if int(ahora * 2) % 2 == 0:
+            cv2.circle(lienzo, (x0 + 22, y0 + 16), 8, ROJO, -1, cv2.LINE_AA)
+        escribir(lienzo, cadena, x0 + 38, y0 + 5, 16, BLANCO, negrita=True)
 
     def ayuda(self, lienzo: np.ndarray) -> None:
         x0, y0, x1 = 230, 78, config.ANCHO - 230

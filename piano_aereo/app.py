@@ -13,6 +13,7 @@ import numpy as np
 
 from . import config
 from .canciones import CANCIONES, Demo, Guia, Ritmo
+from .grabacion import Grabadora, guardar_captura
 from .interfaz import Interfaz
 from .notas import Teclado
 from .sintetizador import MotorAudio, acompanamiento
@@ -58,6 +59,9 @@ class App:
         self._manos: Sequence[np.ndarray] = ()
         self._t_manos = 0.0
         self._t_dibujo: Optional[float] = None
+        self.grabadora = Grabadora()
+        self._lienzo: Optional[np.ndarray] = None  # última pantalla dibujada
+        self._errores = 0
         self.cambiar_modo(args.modo, time.perf_counter())
 
     # ----------------------------------------------------------------- estado
@@ -232,6 +236,14 @@ class App:
         elif c == "f":
             self.pantalla_completa = not self.pantalla_completa
             self._aplicar_pantalla()
+        elif c == "g":
+            self.alternar_grabacion(ahora)
+        elif c == "i" and self._lienzo is not None:
+            try:
+                ruta = guardar_captura(self._lienzo, self.grabadora.carpeta)
+                self.avisar("Captura guardada en grabaciones/%s" % ruta.name, ahora, 3.0)
+            except OSError as exc:
+                self.avisar("No se pudo guardar la captura: %s" % exc, ahora, 3.0)
         elif c and c in config.TECLAS_PC:
             # El teclado del PC no avisa al soltar: la nota dura un tiempo fijo.
             voz = ("pc", c)
@@ -312,6 +324,19 @@ class App:
             ui.ayuda(lienzo)
         return lienzo
 
+    def alternar_grabacion(self, ahora: float) -> None:
+        """Empieza o termina de grabar vídeo y audio en ``grabaciones/``."""
+        try:
+            if self.grabadora.activa:
+                rutas = self.grabadora.detener()
+                self.avisar("Guardado en grabaciones/: " + " + ".join(r.name for r in rutas), ahora, 4.0)
+            else:
+                self.grabadora.iniciar(self.audio, ahora)
+                self.avisar("Grabando vídeo y audio (G para terminar)", ahora)
+        except OSError as exc:
+            log.exception("Fallo en la grabación")
+            self.avisar("No se pudo grabar: %s" % exc, ahora, 3.0)
+
     def _camara_activa(self) -> bool:
         return self.vision is not None and not self.vision.error
 
@@ -319,7 +344,7 @@ class App:
         if self.vision is None:
             return ""
         if self.vision.error:
-            return "Sin cámara (%s). Toca con las teclas Z X C V B N M , . /" % self.vision.error
+            return "Sin cámara (%s), reintentando… Mientras, toca con Z X C V B N M , . /" % self.vision.error
         if not self.vision.lista:
             return "Abriendo la cámara…"
         if self.vision.oscura:
@@ -345,30 +370,64 @@ class App:
         self.cambiar_modo(self.modo, anterior)
         try:
             while True:
-                if self._camara_activa():
-                    cuadro = self.vision.esperar(0.03)
-                    if cuadro is not None:
-                        self._imagen = cuadro.imagen
-                        self.procesar_manos(cuadro.manos, cuadro.t)
-                elif self._manos:
-                    self.procesar_manos((), time.perf_counter())
-                ahora = time.perf_counter()
-                self.avanzar(ahora, ahora - anterior)
+                ahora = self._paso(anterior)
                 anterior = ahora
-                cv2.imshow(config.TITULO, self.componer(ahora))
                 k = cv2.waitKey(1 if self._camara_activa() else 15)
-                if k != -1 and not self.tecla_pc(k & 0xFF, ahora):
+                if k != -1 and not self._proteger(self.tecla_pc, k & 0xFF, ahora):
                     break
                 if cv2.getWindowProperty(config.TITULO, cv2.WND_PROP_VISIBLE) < 1:
                     break
         except KeyboardInterrupt:
             pass
         finally:
+            if self.grabadora.activa:
+                self.grabadora.detener()
             if self.vision is not None:
                 self.vision.detener()
             self.audio.cerrar()
             cv2.destroyAllWindows()
         return 0
+
+    def _paso(self, anterior: float) -> float:
+        """Un fotograma completo: cámara, lógica, dibujo y grabación."""
+        if self._camara_activa():
+            cuadro = self.vision.esperar(0.03)
+            if cuadro is not None:
+                self._imagen = cuadro.imagen
+                self._proteger(self.procesar_manos, cuadro.manos, cuadro.t)
+        else:
+            self._imagen = None
+            if self._manos:  # la cámara se perdió con dedos pulsados: soltarlos
+                self._proteger(self.procesar_manos, (), time.perf_counter())
+        ahora = time.perf_counter()
+        if self.audio.vigilar(ahora):
+            self._ondas.clear()  # estaban renderizadas para la frecuencia anterior
+            self._proteger(self.cambiar_modo, self.modo, ahora)
+        self._proteger(self.avanzar, ahora, ahora - anterior)
+        lienzo = self._proteger(self.componer, ahora)
+        if lienzo is None:  # si falla el dibujo se repite la última pantalla
+            lienzo = self._lienzo if self._lienzo is not None else self.interfaz.fondo(None)
+        self._lienzo = lienzo
+        self._proteger(self.grabadora.cuadro, lienzo, ahora)
+        if self.grabadora.activa:
+            lienzo = lienzo.copy()
+            self.interfaz.indicador_grabacion(lienzo, self.grabadora.duracion(ahora), ahora)
+        cv2.imshow(config.TITULO, lienzo)
+        return ahora
+
+    def _proteger(self, funcion, *args):
+        """Ejecuta ``funcion`` sin dejar que un error inesperado cierre la aplicación.
+
+        En una presentación es preferible saltarse un fotograma a que la
+        ventana se cierre. El error queda en ``piano_aereo.log``.
+        """
+        try:
+            return funcion(*args)
+        except Exception:
+            self._errores += 1
+            if self._errores <= 5 or self._errores % 100 == 0:
+                log.exception("Error inesperado en %s (n.º %d)", funcion.__name__, self._errores)
+            return True if funcion == self.tecla_pc else None
 
 
 def diagnostico(camara: int) -> int:
@@ -445,10 +504,25 @@ def crear_argumentos() -> argparse.ArgumentParser:
     return p
 
 
+def configurar_registro(detalle: bool) -> None:
+    """Consola con avisos (o todo con ``--detalle``) y archivo ``piano_aereo.log`` completo."""
+    raiz = logging.getLogger()
+    raiz.setLevel(logging.INFO)
+    consola = logging.StreamHandler()
+    consola.setLevel(logging.INFO if detalle else logging.WARNING)
+    consola.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    raiz.addHandler(consola)
+    try:
+        archivo = logging.FileHandler(str(config.RAIZ / "piano_aereo.log"), mode="w", encoding="utf-8")
+    except OSError:
+        return
+    archivo.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    raiz.addHandler(archivo)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = crear_argumentos().parse_args(argv)
-    logging.basicConfig(level=logging.INFO if args.detalle else logging.WARNING,
-                        format="%(levelname)s %(name)s: %(message)s")
+    configurar_registro(args.detalle)
     if args.diagnostico:
         return diagnostico(args.camara)
     args.sensibilidad = min(max(args.sensibilidad, config.SENSIBILIDAD_MIN), config.SENSIBILIDAD_MAX)

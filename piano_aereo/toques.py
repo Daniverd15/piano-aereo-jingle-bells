@@ -173,8 +173,17 @@ class DetectorToques:
         quietos = m.caida < 0.35 * self.umbral
         m.pos[quietos] += 0.5 * (puntas[quietos] - m.pos[quietos])
 
-        candidatos = [i for i in range(5) if libres[i] and m.caida[i] >= self.umbral]
-        if len(candidatos) >= 4:
+        # Rechazo de modo común: un toque es un dedo que baja mientras los
+        # demás siguen quietos. A la caída de cada dedo se le resta la mediana
+        # de la de los otros dedos largos; si la mano entera se cierra o se
+        # relaja, todos bajan a la vez y la caída propia queda cerca de cero.
+        propia = m.caida.copy()
+        if config.MODO_COMUN:
+            for i in range(5):
+                otros = [m.caida[j] for j in range(1, 5) if j != i]
+                propia[i] -= max(float(np.median(otros)), 0.0)
+        candidatos = [i for i in range(5) if libres[i] and propia[i] >= self.umbral]
+        if len(candidatos) >= config.CAMBIO_POSTURA:
             # Casi todos los dedos se acortan a la vez: la mano se inclina o
             # se cierra, no es un toque. Se toma como la nueva postura de reposo.
             m.reposo[libres] = m.ext[libres]
@@ -205,6 +214,6 @@ class DetectorToques:
         for i in range(5):
             self.lecturas.append(Lectura(
                 lado, i, (float(puntas[i, 0]), float(puntas[i, 1])), float(m.pos[i, 0]),
-                float(np.clip(m.caida[i] / self.umbral, 0.0, 1.0)), bool(m.pulsado[i]),
+                float(np.clip(propia[i] / self.umbral, 0.0, 1.0)), bool(m.pulsado[i]),
             ))
         return eventos

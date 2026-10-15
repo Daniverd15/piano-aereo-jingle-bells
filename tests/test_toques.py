@@ -106,3 +106,28 @@ def test_sensibilidad_acotada():
     for _ in range(50):
         d.ajustar(0.02)
     assert d.umbral == config.SENSIBILIDAD_MAX
+
+
+def test_calidad_del_detector_en_una_sesion_sintetica():
+    """Regresión de calidad: una sesión realista no debe empeorar sin que se note."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import evaluar_detector as ev
+
+    sesiones = [ev.generar_sesion(np.random.default_rng(7), segundos=60.0)]
+    r = ev.medir(sesiones, config.SENSIBILIDAD, ev.RUIDO_BASE)
+    assert r.precision >= 0.92 and r.sensibilidad >= 0.92 and r.f1 >= 0.94
+    assert r.latencia_ms < 130 and r.falsos_por_minuto <= 4
+
+
+def test_cerrar_la_mano_poco_a_poco_no_suena():
+    """Los dedos cruzan el umbral en fotogramas distintos: el rechazo de modo común lo frena."""
+    d = DetectorToques()
+    guion = [(ABIERTA, 20)]
+    for k in range(1, 9):  # cada dedo va un poco por delante del siguiente
+        f = k / 8.0
+        guion.append(((0, min(1, f * 1.3), min(1, f * 1.15), f, f * 0.9), 2))
+    eventos, _ = simular(d, guion + [((0, 1, 1, 1, 0.9), 10)])
+    assert eventos == []

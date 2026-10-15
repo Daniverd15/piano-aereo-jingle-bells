@@ -169,8 +169,15 @@ class MotorAudio:
         self._voces: Dict[Hashable, _Voz] = {}
         self._colas: List[_Voz] = []  # voces soltadas que aún se apagan
         self._flujo = None
+        self._activo = activo
+        self._t_revision = 0.0
+        self._fallos_callback = 0
+        self.toma: Optional[List[np.ndarray]] = None  # bloques de salida mientras se graba
         if activo:
             self._abrir()
+        self._sintetizar_muestras()
+
+    def _sintetizar_muestras(self) -> None:
         self._muestras = {
             (timbre, nota): sintetizar(frecuencia(nota), timbre, self.fm)
             for timbre in config.TIMBRES
@@ -213,7 +220,42 @@ class MotorAudio:
         log.warning("No hay salida de audio: la aplicación seguirá sin sonido")
 
     def _callback(self, salida, cuadros, _tiempo, _estado) -> None:  # pragma: no cover
-        salida[:] = self.mezclar(cuadros)
+        # Un error aquí detendría el sonido para siempre: se sustituye por
+        # silencio y se anota, pero el flujo sigue vivo.
+        try:
+            salida[:] = self.mezclar(cuadros)
+        except Exception:
+            salida.fill(0)
+            self._fallos_callback += 1
+            if self._fallos_callback <= 3:
+                log.exception("Error al mezclar el audio")
+
+    def vigilar(self, ahora: float) -> bool:
+        """Reabre la salida de audio si se perdió (p. ej. al desconectar unos audífonos).
+
+        Se llama en cada fotograma pero solo comprueba cada 3 s. Devuelve
+        ``True`` si se reabrió con otra frecuencia de muestreo, en cuyo caso las
+        ondas ya renderizadas para la frecuencia anterior dejan de servir.
+        """
+        if not self._activo or ahora - self._t_revision < 3.0:
+            return False
+        self._t_revision = ahora
+        try:
+            vivo = self._flujo is not None and self._flujo.active
+        except Exception:
+            vivo = False
+        if vivo:
+            return False
+        log.warning("La salida de audio no responde: reabriendo")
+        self.cerrar()
+        self.disponible = False
+        anterior = self.fm
+        self._abrir()
+        if self.fm == anterior:
+            return False
+        self.silenciar()
+        self._sintetizar_muestras()
+        return True
 
     # ----------------------------------------------------------------- mezcla
     def mezclar(self, cuadros: int) -> np.ndarray:
@@ -233,7 +275,11 @@ class MotorAudio:
                 voz.pos += n
             self._colas = [v for v in self._colas if v.pos < len(v.muestra) and v.ganancia > 1e-3]
         # tanh actúa de limitador suave: los acordes no saturan con chasquidos.
-        return np.tanh(mezcla * self.volumen)
+        salida = np.tanh(mezcla * self.volumen)
+        toma = self.toma
+        if toma is not None:
+            toma.append(salida.copy())
+        return salida
 
     # ------------------------------------------------------------------ notas
     def tocar(self, voz: Hashable, nota: str, fuerza: float = 0.8, paneo: float = 0.0) -> None:
