@@ -241,7 +241,7 @@ del bucle de dibujo.
 
 ## 9. Verificación del software
 
-- **67 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
+- **72 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
   - detector, partitura, síntesis, mezclador y modos de juego;
   - de extremo a extremo, tocar el coro completo sin errores en los modos Guía y
     Ritmo, y en la forma «cinco dedos» sin mover la mano;
@@ -259,7 +259,72 @@ del bucle de dibujo.
   cámara (incluida la imagen negra por tapa cerrada) y audio antes de una
   presentación.
 
-## 10. Limitaciones y trabajo futuro
+## 10. Prueba con un usuario real
+
+El autor tocó el coro completo dos veces en el modo Guía (una con cada forma de
+tocar) con la opción `--registrar-manos`, que guarda los 21 puntos de cada
+mano en cada fotograma. Se registraron 9,5 minutos (13 596 fotogramas, unos
+24 por segundo con la luz de la habitación).
+
+| Forma | Notas correctas | Notas equivocadas | Precisión |
+|---|---:|---:|---:|
+| Apuntar | 51 | 4 | 93 % |
+| Cinco dedos | 51 | 21 | 71 % |
+
+**Diagnóstico con los datos:**
+
+- **Orden de los dedos.** La forma «cinco dedos» ordenaba los dedos por la
+  posición horizontal de sus puntas. Con los datos se comprobó que ese orden no
+  coincidía con el anatómico en el 18 % de los fotogramas, y en la mano
+  izquierda la asignación de teclas cambiaba en el 54 % de ellos: las puntas
+  del anular y el meñique se cruzaban. Se pasó a un orden anatómico, que usa los
+  nudillos del índice y el meñique para saber hacia dónde mira la mano.
+- **Clasificación de los 21 errores de «cinco dedos»:**
+  - 10 fueron la tecla vecina (dedo o posición equivocados);
+  - 7 fueron un dedo arrastrado que sonó a la vez que el correcto;
+  - 4 fueron la otra mano moviéndose mientras tocaba la primera.
+
+  Los arrastres llegaban **a la vez o justo después** de la nota correcta, rara
+  vez antes.
+
+**Banco de pruebas con los datos reales.** Para comparar variantes sin volver
+a tocar, se reproducen los fotogramas grabados a través del detector. Primero
+se validó que la reproducción es exacta: da los mismos aciertos y errores que
+en vivo.
+
+Comparar con el modo Guía completo no es justo: en cuanto una variante cambia
+un resultado, la canción se desfasa respecto a los movimientos reales y el
+error se propaga. Por eso se evaluó contra la **intención**: en cada instante,
+la nota que pedía la canción en vivo.
+
+| Variante | Apuntar | Cinco dedos |
+|---|---|---|
+| Original | 51 correctas, 4 sobrantes | 49 correctas, 23 sobrantes |
+| Un dedo por mano a la vez | 51 / 3 | 45 / 20 (pierde correctas) |
+| Retener 150 ms las notas no esperadas | 51 / 4 | 49 / 20 |
+| **Retener antes y descartar después de la correcta (150 ms)** | **51 / 3** | **49 / 12** |
+
+Conclusiones:
+
+- El pulgar **no** debía penalizarse. Al exigirle una caída un 30 % mayor, la
+  reproducción de la canción con «apuntar» (exacta en su versión original) bajó
+  de 51 a 18 aciertos: el autor usaba el pulgar de verdad.
+- Prohibir dos dedos a la vez perdía notas buenas, porque a veces el dedo
+  arrastrado baja antes que el querido.
+- La regla que funciona usa la información que solo tienen los modos Guía y
+  Ritmo, que es **qué nota se espera**:
+  - una nota no esperada se retiene 150 ms y se descarta si llega la correcta;
+  - una nota no esperada que llega hasta 150 ms después de la correcta también se descarta.
+
+  Con ella, «cinco dedos» pasa de 68 % a **80 %** de precisión sin perder
+  ninguna nota correcta. Las notas correctas siguen sonando sin espera; una nota
+  equivocada aislada suena como error con 150 ms de retraso.
+
+Los 12 errores que quedan son sobre todo de dedo equivocado. Es una cuestión
+de práctica con la digitación, no de detección. Por eso la forma recomendada
+para presentar es «apuntar».
+
+## 11. Limitaciones y trabajo futuro
 
 - **Los datos de evaluación son sintéticos.** Sirven para comparar variantes y
   elegir parámetros con criterio, pero las cifras absolutas no garantizan el

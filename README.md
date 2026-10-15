@@ -164,6 +164,7 @@ aplicación lo descarga automáticamente al arrancar.
 | `--sin-sonido` | Ejecutar sin audio | desactivado |
 | `--pantalla-completa` | Abrir a pantalla completa | desactivado |
 | `--ajustes-de-fabrica` | Ignorar los ajustes guardados de la última vez | desactivado |
+| `--registrar-manos` | Guardar los puntos de las manos de cada fotograma en `grabaciones/manos_*.pkl`, para analizar la detección | desactivado |
 | `--diagnostico` | Comprobar cámara, modelo y audio, y salir | — |
 | `--detalle` | Mostrar mensajes de diagnóstico en la consola | desactivado |
 
@@ -201,7 +202,14 @@ Guía y Ritmo, un círculo dorado señala el dedo que debe tocar la siguiente no
 Con la mano centrada sobre Mi, los dedos quedan en Do–Re–Mi–Fa–Sol y **el coro
 completo de Jingle Bells se toca sin mover la mano**. Para la estrofa, que baja
 hasta Sol grave, basta con desplazarla: las cinco teclas se mueven con ella.
-Mientras un dedo está pulsado, la posición se queda fija.
+Mientras un dedo está pulsado, la posición se queda fija. Los dedos se ordenan
+por la anatomía de la mano (el pulgar del lado del índice) y no por dónde caen
+sus puntas, que en una prueba real se cruzaban con frecuencia.
+
+> **¿Cuál usar en una presentación?** En la prueba con un usuario real, la
+> forma *apuntar* acertó el 94 % de las notas y *cinco dedos* el 80 % (ver
+> [informe](docs/INFORME.md#10-prueba-con-un-usuario-real)). Mover el anular o
+> el meñique por separado cuesta más que apuntar con el índice.
 
 | | Apuntar con el dedo | Cinco dedos |
 |---|---|---|
@@ -242,7 +250,7 @@ difícil (±0,10 s y ±0,20 s).
 | `T` | Cambiar el timbre |
 | `P` | Activar o quitar la pista de acompañamiento |
 | `5` | Cambiar la forma de tocar: apuntar con el dedo / cinco dedos |
-| `A` | Activar o quitar la asistencia de puntería (forma «apuntar») |
+| `A` | Activar o quitar la asistencia: perdona los toques al borde de la tecla esperada y descarta los dedos arrastrados (Guía y Ritmo) |
 | `+` / `-` | Aumentar / reducir la sensibilidad |
 | `R` | Reiniciar la canción |
 | `E` | Mostrar u ocultar el esqueleto de la mano |

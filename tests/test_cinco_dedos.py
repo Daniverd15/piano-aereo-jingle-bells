@@ -127,3 +127,66 @@ def test_cambiar_de_forma_de_tocar_con_la_tecla_5(monkeypatch):
     app._paso(time.perf_counter())
     app.tecla_pc(ord("5"), t)
     assert app.cinco_dedos and app._errores == 0
+
+
+def test_orden_anatomico_aunque_las_puntas_se_crucen():
+    """En una sesión real las puntas del anular y el meñique se cruzaban en pantalla."""
+    t = teclado()
+    cinco = CincoDedos(t)
+    xs = dedos_en(t, MI)
+    revueltas = [xs[0], xs[1], xs[2], xs[4], xs[3]]  # anular y meñique cruzados
+    cinco.actualizar(lecturas(revueltas), {"der": True})
+    assert [cinco.tecla("der", d) for d in range(5)] == [DO, RE, MI, FA, SOL]
+    cinco.actualizar(lecturas(revueltas, lado="izq"), {"izq": False})  # mano vista al revés
+    assert [cinco.tecla("izq", d) for d in range(5)] == [SOL, FA, MI, RE, DO]
+
+
+def _guia_cinco_dedos():
+    app = crear("--modo", "guia")
+    cx, t = centro_para(app, MI), 0.0
+    for _ in range(15):
+        t += DT
+        app.procesar_manos([mano_sintetica(cx, 480)], t)
+    assert app.guia.objetivo == "E4" and app.cinco.tecla("der", 2) == MI
+    return app, cx, t
+
+
+def _tocar(app, cx, t, guion):
+    for flexion, cuadros in guion:
+        for _ in range(cuadros):
+            t += DT
+            app.procesar_manos([mano_sintetica(cx, 480, flexion=flexion)], t)
+            app.avanzar(t, DT)
+    return t
+
+
+def test_el_dedo_arrastrado_junto_al_correcto_no_cuenta():
+    """Medio (Mi, el esperado) y anular (Fa) bajan en el mismo fotograma: solo suena Mi."""
+    app, cx, t = _guia_cinco_dedos()
+    _tocar(app, cx, t, [((0, 0, 1, 0.8, 0), 4), (ABIERTA, 10)])
+    assert (app.guia.aciertos, app.guia.errores) == (1, 0)
+    assert [f.nota_tocada for f in app.sesion.filas] == ["E4"]
+
+
+def test_el_dedo_arrastrado_justo_antes_del_correcto_no_suena():
+    """El anular se adelanta dos fotogramas al medio: se retiene y se descarta."""
+    app, cx, t = _guia_cinco_dedos()
+    _tocar(app, cx, t, [((0, 0, 0, 0.8, 0), 2), ((0, 0, 1, 0.8, 0), 4), (ABIERTA, 10)])
+    assert (app.guia.aciertos, app.guia.errores) == (1, 0)
+    assert [f.nota_tocada for f in app.sesion.filas] == ["E4"]
+
+
+def test_un_dedo_equivocado_solo_suena_como_error_tras_la_espera():
+    app, cx, t = _guia_cinco_dedos()
+    t = _tocar(app, cx, t, [((0, 0, 0, 1, 0), 3)])
+    assert app.guia.errores == 0 and app.retenidas  # retenido, todavía sin sonar
+    _tocar(app, cx, t, [((0, 0, 0, 1, 0), 3), (ABIERTA, 10)])
+    assert (app.guia.aciertos, app.guia.errores) == (0, 1) and not app.retenidas
+    assert [f.nota_tocada for f in app.sesion.filas] == ["F4"]
+
+
+def test_sin_asistencia_no_se_retiene_nada():
+    app, cx, t = _guia_cinco_dedos()
+    app.asistencia = False
+    _tocar(app, cx, t, [((0, 0, 0, 1, 0), 3)])
+    assert app.guia.errores == 1 and not app.retenidas

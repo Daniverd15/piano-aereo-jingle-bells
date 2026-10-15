@@ -4,9 +4,12 @@ Como en la técnica del piano, la mano se coloca sobre cinco teclas seguidas y
 cada dedo toca la suya, sin apuntar. La tecla central es la que queda bajo el
 centro de la mano; al moverla, las cinco teclas se desplazan con ella.
 
-Los dedos se ordenan por su posición en pantalla (el de más a la izquierda
-toca la nota más grave), así que no hace falta saber si la mano es la derecha
-o la izquierda ni si la palma o el dorso miran a la cámara.
+Los dedos se ordenan por la anatomía de la mano, no por dónde caen sus
+puntas: los nudillos del índice y del meñique dicen hacia qué lado mira la
+mano, y el pulgar siempre va del lado del índice. Ordenar por las puntas
+fallaba en una sesión real: el pulgar relajado queda bajo la palma y su punta
+no está en el extremo en 1 de cada 8 fotogramas, lo que desordenaba las
+teclas. Así no hace falta saber si la mano es la derecha o la izquierda.
 """
 
 from __future__ import annotations
@@ -53,8 +56,13 @@ class CincoDedos:
                 return anterior
         return int(np.clip(round(deseada), 0, ultima))
 
-    def actualizar(self, lecturas: Iterable[Lectura]) -> None:
-        """Recalcula las teclas de cada mano visible a partir de sus dedos en reposo."""
+    def actualizar(self, lecturas: Iterable[Lectura], indice_a_la_izquierda: Optional[Dict[str, bool]] = None) -> None:
+        """Recalcula las teclas de cada mano visible a partir de sus dedos en reposo.
+
+        ``indice_a_la_izquierda`` (por mano) da el orden anatómico; si falta, se
+        ordena por la posición de las puntas.
+        """
+        orientacion = indice_a_la_izquierda or {}
         por_mano: Dict[str, List[Lectura]] = {}
         for lectura in lecturas:
             por_mano.setdefault(lectura.lado, []).append(lectura)
@@ -65,7 +73,10 @@ class CincoDedos:
         for lado, dedos in por_mano.items():
             if len(dedos) < 5 or (lado in self._teclas and any(d.pulsado for d in dedos)):
                 continue  # con un dedo pulsado la posición no se mueve
-            orden = sorted(dedos, key=lambda d: d.carril_x)
+            if lado in orientacion:
+                orden = sorted(dedos, key=lambda d: d.dedo if orientacion[lado] else -d.dedo)
+            else:
+                orden = sorted(dedos, key=lambda d: d.carril_x)
             base = self._elegir_base(lado, float(np.median([d.carril_x for d in dedos])))
             self._base[lado] = base
             self._teclas[lado] = {d.dedo: base + k for k, d in enumerate(orden)}

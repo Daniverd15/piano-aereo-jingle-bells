@@ -1,5 +1,25 @@
 # Registro de cambios
 
+## [1.4.1] — 2026-10-14
+
+Correcciones a partir de una prueba con un usuario real (9,5 minutos de puntos
+de las manos grabados y dos canciones completas en modo Guía).
+
+### Cambiado
+- «Cinco dedos» ordena los dedos por la anatomía de la mano (nudillos del
+  índice y el meñique) en lugar de por la posición de sus puntas, que se
+  cruzaban: en la mano izquierda la asignación cambiaba en el 54 % de los
+  fotogramas.
+- La asistencia descarta los dedos arrastrados en Guía y Ritmo. Una nota no
+  esperada se retiene 150 ms y se descarta si la correcta llega en ese tiempo
+  o acaba de llegar. Con «cinco dedos», precisión del 68 % al 80 % sobre los
+  datos reales, sin perder notas correctas.
+
+### Añadido
+- `--registrar-manos`: guarda los puntos de las manos de cada fotograma para
+  analizar la detección.
+- 5 pruebas nuevas (72 en total), que reproducen los casos reales.
+
 ## [1.4.0] — 2026-10-14
 
 ### Añadido

@@ -93,6 +93,9 @@ class DetectorToques:
         self.ancho = ancho
         self._manos: Dict[str, _EstadoMano] = {}
         self.lecturas: List[Lectura] = []
+        # Por mano: True si el nudillo del índice queda a la izquierda del del meñique en
+        # pantalla. Da el orden real de los dedos (el pulgar va del lado del índice).
+        self.indice_a_la_izquierda: Dict[str, bool] = {}
 
     def ajustar(self, delta: float) -> float:
         """Cambia el umbral (más bajo = más sensible) y devuelve el nuevo valor."""
@@ -135,6 +138,7 @@ class DetectorToques:
             if lado not in visibles and t - estado.t_visto > config.GRACIA:
                 eventos.extend(Toque(False, lado, i) for i in np.flatnonzero(estado.pulsado))
                 del self._manos[lado]
+                self.indice_a_la_izquierda.pop(lado, None)
         self.lecturas = []
         for lado in LADOS:
             if lado in visibles:
@@ -158,6 +162,7 @@ class DetectorToques:
             m.ext = m.ext + config.SUAVIZADO * (ext - m.ext)
             rapidez = float(np.hypot(*(p[0] - m.muneca))) / palma / dt
         m.t_visto, m.muneca, m.centro, m.palma = t, p[0].copy(), p.mean(axis=0), palma
+        self.indice_a_la_izquierda[lado] = bool(p[5, 0] < p[17, 0])
 
         # Referencia de "dedo estirado": sube rápido y baja despacio, de modo
         # que un toque (brusco) destaca pero un cambio de postura se absorbe.

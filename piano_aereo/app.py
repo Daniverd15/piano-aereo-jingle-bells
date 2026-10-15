@@ -78,6 +78,9 @@ class App:
         self.pulsadas: Dict[Hashable, int] = {}  # voz -> tecla que mantiene pulsada
         self.fallos: Dict[int, float] = {}  # tecla -> instante del último error
         self.notas_pc: List[Tuple[Hashable, float]] = []  # (voz, instante de soltar)
+        # Notas no esperadas en espera: (límite, voz, tecla, fuerza, ahora, t_juicio, soltada).
+        self.retenidas: List[list] = []
+        self._t_esperada = -1e9  # último instante en que sonó una nota esperada
         self.ver_ayuda = False
         self.ver_esqueleto = True
         self._ondas: Dict[Hashable, np.ndarray] = {}  # acompañamientos ya renderizados
@@ -98,6 +101,8 @@ class App:
         self._fanfarria: List[Tuple[float, str]] = []  # (instante, nota) de la celebración
         self._celebrado = False
         self.ver_espectro = False
+        # Diagnóstico: puntos de las manos y toques de cada fotograma, para analizar después.
+        self.registro_manos: Optional[List[tuple]] = [] if getattr(args, "registrar_manos", False) else None
         self.cambiar_modo(args.modo, time.perf_counter())
 
     # ----------------------------------------------------------------- estado
@@ -122,6 +127,7 @@ class App:
         self.pulsadas.clear()
         self.fallos.clear()
         self.notas_pc = []
+        self.retenidas = []
         self.interfaz.limpiar_efectos()
         self.fuegos.limpiar()
         self._fanfarria = []
@@ -212,6 +218,10 @@ class App:
         if manos:
             self._t_manos = t
         eventos = self.detector.actualizar(manos, t)
+        if self.registro_manos is not None:
+            self.registro_manos.append((t, self.modo, [p.copy() for p in manos],
+                                        [(e.pulsa, e.lado, e.dedo, e.x) for e in eventos],
+                                        [(l.lado, l.dedo, l.progreso) for l in self.detector.lecturas]))
         # Gesto de puño: solo en la pantalla de resultados, para repetir la canción.
         if self.en_resultados(t):
             self._progreso_puno, hecho = self.puno.actualizar(manos, t)
@@ -223,16 +233,41 @@ class App:
             self._progreso_puno = 0.0
         # Se recalcula siempre, para que cambiar de forma de tocar sea instantáneo;
         # con un dedo pulsado, la posición de esa mano queda fija.
-        self.cinco.actualizar(self.detector.lecturas)
+        self.cinco.actualizar(self.detector.lecturas, self.detector.indice_a_la_izquierda)
         for toque in eventos:
             if not toque.pulsa:
-                self.soltar(toque.voz)
+                retenida = next((r for r in self.retenidas if r[1] == toque.voz), None)
+                if retenida is not None:
+                    retenida[6] = True  # se soltó antes de decidir: si suena, será breve
+                else:
+                    self.soltar(toque.voz)
                 continue
             # El dedo se movió un poco antes de que llegara el fotograma.
             t_real = t - self.retraso_camara
             tecla = self.tecla_para(toque, t_real)
-            if tecla is not None:
-                self.tocar(toque.voz, tecla, toque.fuerza, t, t_real)
+            if tecla is None:
+                continue
+            objetivos = list(self._objetivos(t_real))
+            if self.asistencia and objetivos and tecla not in objetivos:
+                if t - self._t_esperada <= config.RETENCION:
+                    continue  # llega justo después de la nota correcta: es arrastre
+                self.retenidas.append([t + config.RETENCION, toque.voz, tecla, toque.fuerza, t, t_real, False])
+                continue
+            if tecla in objetivos:
+                self._t_esperada = t
+                # Llegó la nota correcta: lo que se retenía era arrastre y no debe sonar.
+                self.retenidas = []
+            self.tocar(toque.voz, tecla, toque.fuerza, t, t_real)
+        self._liberar_retenidas(t)
+
+    def _liberar_retenidas(self, ahora: float) -> None:
+        """Hace sonar (como error) las notas retenidas cuya espera terminó sin la nota correcta."""
+        for retenida in [r for r in self.retenidas if ahora >= r[0]]:
+            self.retenidas.remove(retenida)
+            _, voz, tecla, fuerza, t, t_juicio, soltada = retenida
+            self.tocar(voz, tecla, fuerza, ahora, t_juicio)
+            if soltada:
+                self.notas_pc.append((voz, ahora + 0.12))
 
     def en_resultados(self, ahora: float) -> bool:
         """Si la canción terminó y se está mostrando el panel de resultados."""
@@ -269,6 +304,20 @@ class App:
         self.avisar("Retraso corregido: %d → %d ms (se recordará)" % (
             round(1000 * anterior), round(1000 * self.retraso_camara)), ahora, 4.0)
 
+    def _guardar_registro_manos(self) -> None:
+        import pickle
+
+        from .grabacion import CARPETA
+
+        try:
+            CARPETA.mkdir(parents=True, exist_ok=True)
+            ruta = CARPETA / time.strftime("manos_%Y-%m-%d_%H-%M-%S.pkl")
+            with open(ruta, "wb") as archivo:
+                pickle.dump({"umbral": self.detector.umbral, "cuadros": self.registro_manos}, archivo)
+            log.info("Registro de manos guardado en %s (%d cuadros)", ruta, len(self.registro_manos))
+        except OSError as exc:
+            log.warning("No se pudo guardar el registro de manos: %s", exc)
+
     def ajustes_actuales(self) -> dict:
         return {
             "sensibilidad": round(self.detector.umbral, 3), "cinco_dedos": self.cinco_dedos,
@@ -284,6 +333,7 @@ class App:
             if ahora >= cuando:
                 self.audio.tocar(("fiesta", nota, cuando), nota, 0.7, 0.0, timbre="campanas")
                 self._fanfarria.remove((cuando, nota))
+        self._liberar_retenidas(ahora)
         for voz, t_fin in list(self.notas_pc):
             if ahora >= t_fin:
                 self.soltar(voz)
@@ -550,6 +600,8 @@ class App:
             pass
         finally:
             ajustes.guardar(self.ajustes_actuales())
+            if self.registro_manos:
+                self._guardar_registro_manos()
             if self.grabadora.activa:
                 self.grabadora.detener()
             if self.vision is not None:
@@ -673,6 +725,8 @@ def crear_argumentos() -> argparse.ArgumentParser:
     p.add_argument("--pantalla-completa", action="store_true")
     p.add_argument("--ajustes-de-fabrica", action="store_true",
                    help="no usar los ajustes guardados de la última vez")
+    p.add_argument("--registrar-manos", action="store_true",
+                   help="guardar los puntos de las manos de cada fotograma (para analizar la detección)")
     p.add_argument("--diagnostico", action="store_true",
                    help="comprobar cámara, modelo y audio, y salir")
     p.add_argument("--detalle", action="store_true", help="mostrar mensajes de diagnóstico")

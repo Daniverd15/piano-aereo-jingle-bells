@@ -48,7 +48,7 @@ AYUDA = (
     ("T   P", "Cambiar timbre  ·  Pista de acompañamiento sí / no"),
     ("+   -", "Más o menos sensibilidad al doblar el dedo"),
     ("5", "Forma de tocar: apuntar con el dedo  /  cinco dedos (cada dedo, una tecla)"),
-    ("A", "Asistencia: perdona los toques que caen al borde de la tecla"),
+    ("A", "Asistencia: toques al borde de la tecla y dedos arrastrados (Guía y Ritmo)"),
     ("R   F   E", "Reiniciar  ·  Pantalla completa  ·  Esqueleto de la mano"),
     ("G   I", "Grabar vídeo y audio  ·  Guardar captura de pantalla"),
     ("O   L", "Espectro de frecuencias  ·  Corregir el retraso (tras el modo Ritmo)"),

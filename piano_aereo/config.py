@@ -60,6 +60,9 @@ DIFICULTADES = {
 }
 # Retraso medio entre mover el dedo y que la cámara entregue el fotograma.
 RETRASO_CAMARA = 0.05
+# Asistencia anti-arrastre (Guía y Ritmo): una nota que no es la esperada se retiene
+# este tiempo; si mientras tanto llega la correcta, la otra era un dedo arrastrado.
+RETENCION = 0.15
 RETRASO_MAX = 0.25  # tope de la corrección automática
 # Asistencia: un toque que cae junto a la tecla esperada, a menos de esta
 # fracción del ancho de tecla, cuenta como si hubiera caído en ella.
