@@ -12,12 +12,13 @@ import cv2
 import numpy as np
 
 from . import config
+from .asignacion import CincoDedos
 from .canciones import CANCIONES, Demo, Guia, Ritmo
 from .grabacion import Grabadora, guardar_captura
 from .interfaz import Interfaz
-from .notas import Teclado
+from .notas import Teclado, solfeo
 from .sintetizador import MotorAudio, acompanamiento
-from .toques import DetectorToques
+from .toques import DetectorToques, Toque
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,9 @@ class App:
         self.cancion_id = args.cancion
         self.dificultad = args.dificultad
         self.asistencia = not args.sin_asistencia
+        # Forma de tocar: apuntar el dedo a una tecla, o cinco dedos (cada dedo, una tecla).
+        self.cinco_dedos = args.cinco_dedos
+        self.cinco = CincoDedos(self.teclado)
         self.acompanar = not args.sin_acompanamiento
         self.modo = "libre"
         self.pulso_vis = 0.0
@@ -113,8 +117,11 @@ class App:
             return [self.teclado.indice(notas[i].nota) for i in self.ritmo.candidatas(t)]
         return ()
 
-    def tecla_para(self, x: float, t: float) -> Optional[int]:
-        """Tecla que toca un dedo situado en ``x``, aplicando la asistencia."""
+    def tecla_para(self, toque: Toque, t: float) -> Optional[int]:
+        """Tecla que toca un dedo: la asignada (cinco dedos) o la de su carril (apuntar)."""
+        if self.cinco_dedos:
+            return self.cinco.tecla(toque.lado, toque.dedo)
+        x = toque.x
         tecla = self.teclado.tecla_en(x)
         if self.asistencia:
             objetivos = list(self._objetivos(t))
@@ -153,13 +160,17 @@ class App:
         self._manos = manos
         if manos:
             self._t_manos = t
-        for toque in self.detector.actualizar(manos, t):
+        eventos = self.detector.actualizar(manos, t)
+        # Se recalcula siempre, para que cambiar de forma de tocar sea instantáneo;
+        # con un dedo pulsado, la posición de esa mano queda fija.
+        self.cinco.actualizar(self.detector.lecturas)
+        for toque in eventos:
             if not toque.pulsa:
                 self.soltar(toque.voz)
                 continue
             # El dedo se movió un poco antes de que llegara el fotograma.
             t_real = t - config.RETRASO_CAMARA
-            tecla = self.tecla_para(toque.x, t_real)
+            tecla = self.tecla_para(toque, t_real)
             if tecla is not None:
                 self.tocar(toque.voz, tecla, toque.fuerza, t, t_real)
 
@@ -219,6 +230,10 @@ class App:
             if self.modo in ("ritmo", "demo"):
                 self.cambiar_modo(self.modo, ahora)
             self.avisar("Acompañamiento: " + ("sí" if self.acompanar else "no"), ahora)
+        elif c == "5":
+            self.cinco_dedos = not self.cinco_dedos
+            self.avisar("Forma de tocar: " + ("cinco dedos (cada dedo, una tecla)" if self.cinco_dedos
+                                              else "apuntar con el dedo a la tecla"), ahora, 3.0)
         elif c == "a":
             self.asistencia = not self.asistencia
             self.avisar("Asistencia: " + ("activada" if self.asistencia else "desactivada"), ahora)
@@ -284,16 +299,20 @@ class App:
         ui.carriles(lienzo, objetivo, autopista=con_pista)
         if con_pista:
             ui.pista(lienzo, cancion, self.pulso_vis, desde, estados)
+        asignadas = self.cinco.teclas() if self.cinco_dedos else None
         ui.dibujar_teclado(lienzo, self.pulsadas.values(), objetivo, self.fallos, ahora,
-                           con_teclas_pc=not self._camara_activa())
+                           con_teclas_pc=not self._camara_activa(), asignadas=asignadas)
         ui.chispas(lienzo, dt)
         ui.carteles(lienzo, ahora)
-        ui.manos(lienzo, self._manos, self.detector.lecturas, self.ver_esqueleto)
+        siguiente = self._siguiente_tecla()
+        resaltar = self.cinco.dedo_para(siguiente) if asignadas and siguiente is not None else None
+        ui.manos(lienzo, self._manos, self.detector.lecturas, self.ver_esqueleto, asignadas, resaltar, ahora)
 
         detalle = cancion.nombre
         if self.modo in ("ritmo", "demo"):
             detalle += "  ·  " + config.DIFICULTADES[self.dificultad][0]
         detalle += "  ·  " + config.NOMBRES_TIMBRE[self.audio.timbre]
+        detalle += "  ·  " + ("5 dedos" if self.cinco_dedos else "Apuntar")
         if self.vision is not None and self.vision.fps:
             detalle += "  ·  %d fps" % round(self.vision.fps)
         ui.barra(lienzo, self.modo, detalle, progreso if con_pista else None)
@@ -318,8 +337,15 @@ class App:
         if estado and not en_cuenta_atras:
             ui.aviso(lienzo, estado, 330)
         elif self.modo == "libre" and ahora >= hasta:
-            ui.aviso(lienzo, "Modo libre: lleva el dedo al carril de una tecla y dóblalo para tocarla",
+            ui.aviso(lienzo, "Modo libre: coloca la mano sobre el teclado; cada dedo toca una tecla (5 para apuntar)"
+                     if self.cinco_dedos else
+                     "Modo libre: lleva el dedo al carril de una tecla y dóblalo para tocarla (5 para cinco dedos)",
                      74, 19)
+        elif (self.modo == "guia" and asignadas and siguiente is not None and resaltar is None
+              and ahora >= hasta and not guia.terminada):
+            # La nota que toca no cae bajo ninguna mano: hay que desplazarla.
+            ui.aviso(lienzo, "Mueve la mano hasta que %s quede bajo un dedo" % solfeo(self.teclado.notas[siguiente]),
+                     130, 19)
         if self.ver_ayuda:
             ui.ayuda(lienzo)
         return lienzo
@@ -336,6 +362,17 @@ class App:
         except OSError as exc:
             log.exception("Fallo en la grabación")
             self.avisar("No se pudo grabar: %s" % exc, ahora, 3.0)
+
+    def _siguiente_tecla(self) -> Optional[int]:
+        """Tecla de la próxima nota que hay que tocar (Guía y Ritmo)."""
+        notas = self.cancion.notas
+        if self.modo == "guia" and not self.guia.terminada:
+            return self.teclado.indice(self.guia.objetivo)
+        if self.modo == "ritmo":
+            for i in range(self.ritmo.primera, len(notas)):
+                if self.ritmo.estados[i] is None:
+                    return self.teclado.indice(notas[i].nota)
+        return None
 
     def _camara_activa(self) -> bool:
         return self.vision is not None and not self.vision.error
@@ -492,6 +529,8 @@ def crear_argumentos() -> argparse.ArgumentParser:
                    help="cuánto hay que doblar el dedo, de 0.10 (poco) a 0.40 (mucho)")
     p.add_argument("--sin-asistencia", action="store_true",
                    help="no perdonar los toques que caen al borde de la tecla esperada")
+    p.add_argument("--cinco-dedos", action="store_true",
+                   help="cada dedo toca una tecla según dónde esté la mano, sin apuntar")
     p.add_argument("--sin-acompanamiento", action="store_true",
                    help="modos Ritmo y Demo sin bajo, acordes ni cascabeles")
     p.add_argument("--sin-camara", action="store_true", help="tocar solo con el teclado del PC")

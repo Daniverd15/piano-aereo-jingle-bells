@@ -1,6 +1,6 @@
 [project]
 name = "piano-aereo"
-version = "1.2.0"
+version = "1.3.0"
 description = "Toca Jingle Bells en el aire: la cámara del portátil detecta tus dedos como en un piano."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -27,6 +27,7 @@ VERDE: Color = (120, 225, 90)
 ROJO: Color = (70, 70, 240)
 
 MODOS = (("1", "libre", "Libre"), ("2", "guia", "Guía"), ("3", "ritmo", "Ritmo"), ("4", "demo", "Demo"))
+COLOR_MANO = {"izq": (70, 135, 40), "der": (175, 95, 35)}  # fondo del número de dedo: verde y azul
 CARTELES = {"perfecto": ("¡Perfecto!", DORADO), "bien": ("Bien", VERDE), "fallo": ("Fallo", ROJO)}
 COLOR_NOTA = {"S": DORADO, "A": VERDE, "B": (241, 196, 46), "C": (28, 159, 255), "D": ROJO}
 
@@ -44,6 +45,7 @@ AYUDA = (
     ("S   D", "Cambiar canción (coro / completa)  ·  Cambiar dificultad (velocidad)"),
     ("T   P", "Cambiar timbre  ·  Pista de acompañamiento sí / no"),
     ("+   -", "Más o menos sensibilidad al doblar el dedo"),
+    ("5", "Forma de tocar: apuntar con el dedo  /  cinco dedos (cada dedo, una tecla)"),
     ("A", "Asistencia: perdona los toques que caen al borde de la tecla"),
     ("R   F   E", "Reiniciar  ·  Pantalla completa  ·  Esqueleto de la mano"),
     ("G   I", "Grabar vídeo y audio  ·  Guardar captura de pantalla"),
@@ -180,9 +182,13 @@ class Interfaz:
         fallos: Dict[int, float],
         ahora: float,
         con_teclas_pc: bool = False,
+        asignadas: Optional[Dict[Tuple[str, int], int]] = None,
     ) -> None:
         t = self.teclado
         pulsadas = set(pulsadas)
+        digitacion: Dict[int, List[Tuple[str, int]]] = {}
+        for (lado, dedo), tecla in sorted((asignadas or {}).items()):
+            digitacion.setdefault(tecla, []).append((lado, dedo))
         caja(lienzo, 0, t.y - 3, config.ANCHO, config.ALTO, FONDO_PANEL, 0.55)
         for i, nota in enumerate(t.notas):
             x0, y0, x1, y1 = t.rect(i)
@@ -207,12 +213,27 @@ class Interfaz:
             if con_teclas_pc:
                 escribir(lienzo, config.TECLAS_PC[i].upper(), cx, y0 + 18, 15, tinta, "centro",
                          opacidad=0.6)
+            # Cinco dedos: el número de dedo que toca cada tecla (1 pulgar ... 5 meñique).
+            dedos = digitacion.get(i, [])
+            for k, (lado, dedo) in enumerate(dedos):
+                bx = int(cx + (k - (len(dedos) - 1) / 2.0) * 30)
+                cv2.circle(lienzo, (bx, y0 + 36), 13, COLOR_MANO[lado], -1, cv2.LINE_AA)
+                escribir(lienzo, str(dedo + 1), bx, y0 + 25, 17, BLANCO, "centro", True)
 
     # ------------------------------------------------------------------ manos
     def manos(
         self, lienzo: np.ndarray, manos: Sequence[np.ndarray], lecturas: Sequence[Lectura],
         esqueleto: bool = True,
+        asignadas: Optional[Dict[Tuple[str, int], int]] = None,
+        resaltar: Optional[Tuple[str, int]] = None,
+        ahora: float = 0.0,
     ) -> None:
+        """Esqueleto y puntas de los dedos.
+
+        Con ``asignadas`` (cinco dedos) cada punta se une a su tecla; si no, la
+        línea cae en vertical sobre el carril. ``resaltar`` marca el dedo que
+        debe tocar la siguiente nota.
+        """
         t = self.teclado
         if esqueleto:
             for p in manos:
@@ -222,13 +243,20 @@ class Interfaz:
                 for punto in puntos:
                     cv2.circle(lienzo, tuple(punto), 3, (120, 110, 100), -1, cv2.LINE_AA)
         for lectura in lecturas:
-            tecla = t.tecla_en(lectura.carril_x)
+            if asignadas is not None:
+                tecla = asignadas.get((lectura.lado, lectura.dedo))
+            else:
+                tecla = t.tecla_en(lectura.carril_x)
             tono = color(t.notas[tecla]) if tecla is not None else (150, 150, 150)
             x, y = int(lectura.punta[0]), int(lectura.punta[1])
             if tecla is not None and y < t.y:
-                # Plomada: muestra sobre qué tecla caerá el dedo.
-                cv2.line(lienzo, (x, y), (x, t.y), tono, 1, cv2.LINE_AA)
-                cv2.circle(lienzo, (x, t.y), 4, tono, -1, cv2.LINE_AA)
+                # Plomada: muestra qué tecla tocará el dedo.
+                destino = (t.centro(tecla), t.y) if asignadas is not None else (x, t.y)
+                cv2.line(lienzo, (x, y), destino, tono, 1, cv2.LINE_AA)
+                cv2.circle(lienzo, destino, 4, tono, -1, cv2.LINE_AA)
+            if resaltar == (lectura.lado, lectura.dedo) and not lectura.pulsado:
+                radio = int(24 + 4 * math.sin(ahora * 8.0))
+                cv2.circle(lienzo, (x, y), radio, DORADO, 3, cv2.LINE_AA)
             if lectura.pulsado:
                 cv2.circle(lienzo, (x, y), 17, BLANCO, 3, cv2.LINE_AA)
                 cv2.circle(lienzo, (x, y), 12, tono, -1, cv2.LINE_AA)

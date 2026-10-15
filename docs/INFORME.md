@@ -37,8 +37,16 @@ un toque, termina o no pasa nada. Hay que hacerlo:
 - **sin falsos positivos molestos:** una nota fantasma en plena presentación es
   peor que tener que repetir un toque.
 
-Además del dedo, hay que decidir **qué tecla** toca. Cada tecla define un carril
-vertical en la pantalla, y la tecla es la del carril donde está la punta del dedo.
+Además del dedo, hay que decidir **qué tecla** toca. La aplicación ofrece dos
+estrategias, que se cambian en vivo:
+
+- **Apuntar:** cada tecla define un carril vertical en la pantalla y la tecla
+  es la del carril donde estaba la punta del dedo antes de doblarse.
+- **Cinco dedos:** cada mano cubre cinco teclas seguidas, centradas en la que
+  queda bajo la mediana de sus puntas. Los dedos se reparten por orden de
+  posición en pantalla, así que no hace falta saber si la mano es la derecha o
+  la izquierda. Una histéresis de 0,3 teclas evita que la posición parpadee en
+  el borde, y la posición se congela mientras un dedo está pulsado.
 
 ## 3. Variables
 
@@ -213,9 +221,10 @@ del bucle de dibujo.
 
 ## 8. Verificación del software
 
-- **45 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
+- **51 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
   - detector, partitura, síntesis, mezclador y modos de juego;
-  - de extremo a extremo, tocar el coro completo sin errores en los modos Guía y Ritmo;
+  - de extremo a extremo, tocar el coro completo sin errores en los modos Guía y
+    Ritmo, y en la forma «cinco dedos» sin mover la mano;
   - una **prueba de regresión de calidad**: una sesión sintética debe mantener
     F1 ≥ 0,94;
   - **pruebas de robustez:** cámara que no abre o se desconecta y se reconecta

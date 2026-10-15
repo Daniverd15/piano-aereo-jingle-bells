@@ -54,6 +54,9 @@ piano, usando únicamente Python.
 - **Teclado de piano en pantalla.** Diez teclas blancas (Sol3 a Si4). Cualquier
   dedo de cualquiera de las dos manos puede tocar cualquier tecla, mantener
   notas y formar acordes de dos dedos por mano.
+- **Dos formas de tocar**, intercambiables con la tecla `5`: *apuntar* el dedo
+  a la tecla, o *cinco dedos*, donde cada dedo recibe una tecla según dónde está
+  la mano y se ve su número de digitación sobre el teclado.
 - **Detección de toques sin calibración.** El sistema aprende solo cómo es cada
   dedo estirado y se adapta a la distancia y a la postura de la mano.
 - **Detector evaluado con datos.** Sesiones sintéticas etiquetadas miden
@@ -138,6 +141,7 @@ aplicación lo descarga automáticamente al arrancar.
 | `--timbre {piano,campanas,cajita}` | Sonido del instrumento | `piano` |
 | `--camara N` | Índice de la cámara | `0` |
 | `--sensibilidad X` | Cuánto hay que doblar el dedo, de `0.10` (poco) a `0.40` (mucho) | `0.22` |
+| `--cinco-dedos` | Empezar con la forma de tocar «cinco dedos» | desactivado |
 | `--sin-asistencia` | No perdonar los toques al borde de la tecla esperada | desactivado |
 | `--sin-acompanamiento` | Modos Ritmo y Demo sin bajo, acordes ni cascabeles | desactivado |
 | `--sin-camara` | Tocar solo con el teclado del PC | desactivado |
@@ -156,16 +160,39 @@ python -m piano_aereo --modo demo --cancion completa --timbre campanas
 
 ## Cómo se toca
 
-1. Colocar la mano frente a la cámara, a unos 40–60 cm, con la palma hacia ella
-   y los dedos estirados.
-2. Mover la mano hacia los lados. De cada punta de dedo sale una línea que cae
-   sobre la tecla que ese dedo tocaría (su *carril*).
-3. **Doblar el dedo**, como al pulsar una tecla: la nota suena. Al estirarlo de
-   nuevo, la nota se apaga.
+Colocar la mano frente a la cámara, a unos 40–60 cm, con la palma hacia ella y
+los dedos estirados. Una nota suena al **doblar un dedo**, como al pulsar una
+tecla, y se apaga al estirarlo. La aplicación ofrece dos formas de decidir qué
+tecla toca cada dedo; se cambia entre ellas con la tecla `5`.
 
-Para empezar es más fácil usar solo el dedo índice e ir moviendo la mano de
-tecla en tecla. Con algo de práctica, se pueden dejar los cinco dedos sobre
-Do–Sol y tocar el coro completo sin desplazar la mano.
+### Apuntar con el dedo (forma por defecto)
+
+Cada tecla tiene un *carril* vertical en la pantalla. De cada punta de dedo baja
+una línea hasta la tecla de su carril: se mueve la mano para llevar el dedo
+sobre la tecla y se dobla. Cualquier dedo puede tocar cualquier tecla, como en
+un piano, y basta con usar el índice, el dedo más fácil de mover por separado.
+
+### Cinco dedos (tecla `5` o `--cinco-dedos`)
+
+Como en la técnica del piano, la mano se coloca sobre cinco teclas seguidas y
+**cada dedo recibe una automáticamente**, sin apuntar. La tecla central es la
+que queda bajo el centro de la mano, y cada tecla muestra el número del dedo
+que la toca (1 pulgar, 2 índice, 3 medio, 4 anular, 5 meñique). En los modos
+Guía y Ritmo, un círculo dorado señala el dedo que debe tocar la siguiente nota.
+
+![Cinco dedos](docs/captura_cinco_dedos.png)
+
+Con la mano centrada sobre Mi, los dedos quedan en Do–Re–Mi–Fa–Sol y **el coro
+completo de Jingle Bells se toca sin mover la mano**. Para la estrofa, que baja
+hasta Sol grave, basta con desplazarla: las cinco teclas se mueven con ella.
+Mientras un dedo está pulsado, la posición se queda fija.
+
+| | Apuntar con el dedo | Cinco dedos |
+|---|---|---|
+| Puntería | Hay que llevar el dedo al carril | No hace falta |
+| Dedos que se usan | Puede ser solo el índice | Los cinco, incluidos anular y meñique |
+| Mover la mano | Para cada tecla lejana | Solo para cambiar de posición |
+| Parecido | Piano | Piano con digitación de cinco dedos |
 
 ## Modos y controles
 
@@ -198,7 +225,8 @@ difícil (±0,10 s y ±0,20 s).
 | `D` | Cambiar la dificultad (velocidad) de los modos Ritmo y Demo |
 | `T` | Cambiar el timbre |
 | `P` | Activar o quitar la pista de acompañamiento |
-| `A` | Activar o quitar la asistencia de puntería |
+| `5` | Cambiar la forma de tocar: apuntar con el dedo / cinco dedos |
+| `A` | Activar o quitar la asistencia de puntería (forma «apuntar») |
 | `+` / `-` | Aumentar / reducir la sensibilidad |
 | `R` | Reiniciar la canción |
 | `E` | Mostrar u ocultar el esqueleto de la mano |
@@ -345,6 +373,7 @@ piano-aereo-jingle-bells/
 │   ├── app.py            Bucle principal, modos y teclas
 │   ├── vision.py         Cámara y MediaPipe en un hilo propio
 │   ├── toques.py         De los puntos de la mano a toques de piano
+│   ├── asignacion.py     Forma de tocar «cinco dedos»: una tecla por dedo
 │   ├── notas.py          Notas, frecuencias y geometría del teclado
 │   ├── sintetizador.py   Síntesis de notas, acompañamiento y mezclador
 │   ├── canciones.py      Partitura de Jingle Bells; modos Guía, Ritmo y Demo
@@ -376,7 +405,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-El proyecto incluye 45 pruebas que no requieren cámara ni altavoces. Una mano
+El proyecto incluye 51 pruebas que no requieren cámara ni altavoces. Una mano
 sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 
 - que cada uno de los cinco dedos puede pulsar y soltar una tecla;
@@ -389,7 +418,9 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 - que el modo Ritmo califica según la puntería y que el combo multiplica;
 - que el acompañamiento tiene un acorde por compás, no satura y entra a tempo;
 - de extremo a extremo, que se puede tocar el coro completo sin errores tanto en
-  modo Guía como en modo Ritmo;
+  modo Guía como en modo Ritmo, y en «cinco dedos» **sin mover la mano**;
+- que en «cinco dedos» la posición no parpadea en el borde entre teclas, se
+  desplaza con la mano y no se mueve con un dedo pulsado;
 - que la calidad del detector en una sesión sintética no empeora (F1 ≥ 0,94);
 - que la aplicación **no se cae**: la cámara que no abre o se desconecta se
   reconecta sola, el audio perdido se reabre, un error al dibujar no cierra la
@@ -425,7 +456,8 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 | Se abre otra cámara | Probar con `--camara 1` (o `2`). |
 | Aparece "La cámara da imagen negra" | Abrir la tapa de privacidad de la cámara o cerrar la aplicación que la esté usando. |
 | En modo Ritmo las notas van muy rápido | Pulsar `D` hasta la dificultad Fácil. |
-| Los toques caen en la tecla de al lado | Mantener la asistencia activada (`A`) y fijarse en la línea que baja de cada dedo. |
+| Los toques caen en la tecla de al lado | Mantener la asistencia activada (`A`) y fijarse en la línea que baja de cada dedo, o pasar a «cinco dedos» con `5`, donde no hace falta apuntar. |
+| En «cinco dedos» cuesta mover el anular o el meñique solos | Es normal: son los dedos menos independientes. Volver a «apuntar» con `5` y tocar con el índice. |
 | Aparece "Sin cámara" | Cerrar otras aplicaciones que la estén usando (Zoom, Teams, etc.). Mientras tanto se puede tocar con el teclado del PC. |
 | No hay sonido | Revisar el dispositivo de salida del sistema. Si se desconectan unos audífonos, el sonido se reabre solo en unos segundos en el nuevo dispositivo. |
 | La grabación no tiene sonido dentro del vídeo | OpenCV no puede meter audio en el `.mp4`: el audio está en el `.wav` del mismo nombre y se unen en cualquier editor (por ejemplo, Clipchamp en Windows). |

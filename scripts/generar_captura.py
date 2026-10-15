@@ -23,8 +23,8 @@ IZQUIERDA = mano_sintetica(215, 470, tam=TAM, derecha=False)
 ABIERTA, INDICE = (0, 0, 0, 0, 0), (0, 1, 0, 0, 0)
 
 
-def crear(modo):
-    args = ["--sin-camara", "--sin-sonido", "--modo", modo, "--dificultad", "facil"]
+def crear(modo, *extra):
+    args = ["--sin-camara", "--sin-sonido", "--modo", modo, "--dificultad", "facil"] + list(extra)
     app = App(crear_argumentos().parse_args(args))
     app.cambiar_modo(modo, 0.0)
     return app
@@ -76,6 +76,34 @@ def captura_ritmo():
     guardar("captura_resultados.png", cuadro(app, t + DT, tecla, ABIERTA))
 
 
+def captura_cinco_dedos():
+    """Mano quieta sobre Do-Sol: cada dedo con su tecla y el dedo de la próxima nota resaltado."""
+    import numpy as np
+
+    app, t = crear("guia", "--cinco-dedos"), 0.0
+    puntas = mano_sintetica(0, 0, tam=TAM)[[4, 8, 12, 16, 20], 0]
+    cx = app.teclado.centro(app.teclado.indice("E4")) - float(np.median(puntas))
+    mano = lambda flexion: mano_sintetica(cx, 470, tam=TAM, flexion=flexion)  # noqa: E731
+    for _ in range(15):
+        t += DT
+        app.procesar_manos([mano(ABIERTA)], t)
+    dedo_de = {app.cinco.tecla("der", d): d for d in range(5)}
+    for n, nota in enumerate(app.cancion.notas[:8]):
+        flexion = [0.0] * 5
+        flexion[dedo_de[app.teclado.indice(nota.nota)]] = 1.0
+        for f, cuadros in ((flexion, 5), (ABIERTA, 8)):
+            for _ in range(cuadros):
+                t += DT
+                app.procesar_manos([mano(f)], t)
+                app.avanzar(t, DT)
+    for _ in range(12):  # el resaltado del dedo late: se deja un instante para la captura
+        t += DT
+        app.procesar_manos([mano(ABIERTA)], t)
+        app.avanzar(t, DT)
+    guardar("captura_cinco_dedos.png", app.componer(t))
+
+
 if __name__ == "__main__":
     captura_guia()
     captura_ritmo()
+    captura_cinco_dedos()

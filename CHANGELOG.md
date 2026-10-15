@@ -1,5 +1,17 @@
 # Registro de cambios
 
+## [1.3.0] — 2026-10-14
+
+### Añadido
+- Segunda forma de tocar, **cinco dedos** (tecla `5` o `--cinco-dedos`): cada
+  dedo recibe automáticamente una tecla según dónde está la mano, como en la
+  técnica de cinco dedos del piano. El coro de Jingle Bells se toca sin mover
+  la mano.
+- Números de digitación (1 pulgar … 5 meñique) sobre las teclas asignadas, y
+  el dedo que debe tocar la siguiente nota resaltado en Guía y Ritmo.
+- Aviso en Guía cuando la nota que toca queda fuera de las cinco teclas.
+- 6 pruebas nuevas (51 en total).
+
 ## [1.2.0] — 2026-10-14
 
 ### Añadido
