@@ -34,12 +34,13 @@ modo de ritmo al estilo de *Guitar Hero*, con notas que caen, combos y puntuaci�
 6. [Modos y controles](#modos-y-controles)
 7. [Cómo funciona](#cómo-funciona)
 8. [Evaluación del detector](#evaluación-del-detector)
-9. [Estructura del proyecto](#estructura-del-proyecto)
-10. [Pruebas](#pruebas)
-11. [Antes de una demostración](#antes-de-una-demostración)
-12. [Solución de problemas](#solución-de-problemas)
-13. [Limitaciones](#limitaciones)
-14. [Créditos y licencia](#créditos-y-licencia)
+9. [Datos de tus interpretaciones](#datos-de-tus-interpretaciones)
+10. [Estructura del proyecto](#estructura-del-proyecto)
+11. [Pruebas](#pruebas)
+12. [Antes de una demostración](#antes-de-una-demostración)
+13. [Solución de problemas](#solución-de-problemas)
+14. [Limitaciones](#limitaciones)
+15. [Créditos y licencia](#créditos-y-licencia)
 
 ---
 
@@ -81,6 +82,20 @@ piano, usando únicamente Python.
   segundo y salida de audio de baja latencia.
 - **Ayudas visuales.** Cada punta de dedo muestra una línea hacia la tecla que
   tocaría y un arco que indica cuánto falta para que suene.
+- **Datos de cada interpretación.** Al terminar una canción se guarda un CSV
+  con cada nota tocada (dedo, tecla, acierto y, en Ritmo, cuántos ms se adelantó
+  o atrasó), y `scripts/analizar_sesion.py` los analiza con gráficos.
+- **Calibración automática del retraso.** Tras el modo Ritmo, la aplicación mide
+  si en general se toca tarde o temprano y, con `L`, corrige el retraso de la
+  cámara para que la puntuación sea justa en ese equipo.
+- **Espectro de frecuencias en vivo** (`O`): análisis de Fourier del sonido que
+  sale por los altavoces, con la nota dominante y su frecuencia en Hz.
+- **Árbol de Navidad** que se adorna con cada acierto y se corona con una
+  estrella, fuegos artificiales y una fanfarria de campanas al terminar.
+- **Gesto de puño.** En la pantalla de resultados, cerrar la mano un segundo
+  repite la canción sin tocar el teclado del PC.
+- **Ajustes recordados.** Forma de tocar, sensibilidad, timbre, dificultad y
+  corrección de retraso se guardan en `ajustes.json` para la próxima vez.
 - **Grabación de la interpretación.** Con `G` se graba vídeo (`.mp4`) y audio
   (`.wav`) para entregarlo como evidencia; con `I`, una captura de pantalla.
 - **Pensada para no fallar en directo.** La cámara y el audio se reconectan
@@ -148,6 +163,7 @@ aplicación lo descarga automáticamente al arrancar.
 | `--sin-espejo` | No voltear la imagen como un espejo | desactivado |
 | `--sin-sonido` | Ejecutar sin audio | desactivado |
 | `--pantalla-completa` | Abrir a pantalla completa | desactivado |
+| `--ajustes-de-fabrica` | Ignorar los ajustes guardados de la última vez | desactivado |
 | `--diagnostico` | Comprobar cámara, modelo y audio, y salir | — |
 | `--detalle` | Mostrar mensajes de diagnóstico en la consola | desactivado |
 
@@ -233,6 +249,9 @@ difícil (±0,10 s y ±0,20 s).
 | `F` | Pantalla completa |
 | `G` | Empezar / terminar la grabación de vídeo y audio |
 | `I` | Guardar una captura de pantalla |
+| `O` | Mostrar u ocultar el espectro de frecuencias |
+| `L` | Tras el modo Ritmo, corregir el retraso según cómo has tocado |
+| Puño 1 s | En la pantalla de resultados, repetir la canción |
 | `H` | Ayuda en pantalla |
 | `Z X C V B N M , . /` | Tocar las diez teclas con el teclado del PC |
 | `Q` / `Esc` | Salir |
@@ -365,6 +384,38 @@ Análisis completo en el [informe técnico](docs/INFORME.md) y tablas en
 > Los datos son sintéticos: sirven para comparar variantes y elegir parámetros
 > con criterio, no garantizan las mismas cifras con cualquier mano real.
 
+## Datos de tus interpretaciones
+
+Cada vez que terminas una canción en Guía o Ritmo, se guarda en `grabaciones/`
+un CSV con una fila por nota:
+
+| Columna | Contenido |
+|---|---|
+| `segundo` | Momento desde que empezó la canción |
+| `modo`, `forma` | Modo de juego y forma de tocar (apuntar / cinco dedos) |
+| `mano`, `dedo` | Qué mano y qué dedo tocó |
+| `nota_tocada`, `nota_esperada` | Qué sonó y qué pedía la canción |
+| `resultado` | `acierto` / `error` (Guía), `perfecto` / `bien` / `sobra` (Ritmo) |
+| `desfase_ms` | En Ritmo, cuánto se adelantó (−) o atrasó (+) la nota |
+| `fuerza` | Intensidad del toque, de 0,5 a 1 |
+
+El script de análisis los reúne y responde tres preguntas: si tocas tarde o
+temprano, qué dedos fallan más y si mejoras de una sesión a otra.
+
+```bash
+python scripts/analizar_sesion.py
+```
+
+![Ejemplo de análisis](docs/ejemplo_analisis.png)
+
+<sub>Ejemplo generado con tres sesiones **simuladas**. Con tus propias sesiones, el gráfico mostrará tus datos reales.</sub>
+
+En los resultados del modo Ritmo también aparece un gráfico de puntería (una
+marca por nota: arriba tarde, abajo temprano) y la mediana del desfase. Si es
+mayor de 25 ms, la tecla `L` corrige el retraso de la cámara en esa cantidad y
+lo guarda. Se usa la mediana y no la media para que un toque muy desviado no
+arrastre la corrección.
+
 ## Estructura del proyecto
 
 ```
@@ -374,6 +425,11 @@ piano-aereo-jingle-bells/
 │   ├── vision.py         Cámara y MediaPipe en un hilo propio
 │   ├── toques.py         De los puntos de la mano a toques de piano
 │   ├── asignacion.py     Forma de tocar «cinco dedos»: una tecla por dedo
+│   ├── sesion.py         Datos de cada interpretación (CSV) y calibración
+│   ├── espectro.py       Análisis de Fourier del sonido
+│   ├── adornos.py        Árbol de Navidad y fuegos artificiales
+│   ├── gestos.py         Gesto de puño para repetir
+│   ├── ajustes.py        Ajustes recordados entre sesiones
 │   ├── notas.py          Notas, frecuencias y geometría del teclado
 │   ├── sintetizador.py   Síntesis de notas, acompañamiento y mezclador
 │   ├── canciones.py      Partitura de Jingle Bells; modos Guía, Ritmo y Demo
@@ -386,6 +442,7 @@ piano-aereo-jingle-bells/
 ├── tests/                Pruebas automáticas (pytest)
 ├── scripts/
 │   ├── evaluar_detector.py   Evaluación cuantitativa del detector
+│   ├── analizar_sesion.py    Análisis de los CSV de tus interpretaciones
 │   └── generar_captura.py    Capturas de pantalla de la documentación
 ├── docs/
 │   ├── INFORME.md                  Informe técnico
@@ -405,7 +462,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-El proyecto incluye 51 pruebas que no requieren cámara ni altavoces. Una mano
+El proyecto incluye 67 pruebas que no requieren cámara ni altavoces. Una mano
 sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 
 - que cada uno de los cinco dedos puede pulsar y soltar una tecla;
@@ -422,6 +479,11 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 - que en «cinco dedos» la posición no parpadea en el borde entre teclas, se
   desplaza con la mano y no se mueve con un dedo pulsado;
 - que la calidad del detector en una sesión sintética no empeora (F1 ≥ 0,94);
+- que el espectro reconoce La4, Do4 y Sol3 por su frecuencia y no inventa notas
+  en silencio;
+- que al terminar se guardan los datos en CSV, que el análisis los lee y que la
+  calibración centra los toques;
+- que el gesto de puño no suena ni reinicia nada en mitad de una canción;
 - que la aplicación **no se cae**: la cámara que no abre o se desconecta se
   reconecta sola, el audio perdido se reabre, un error al dibujar no cierra la
   ventana, y la grabación produce vídeo y audio sincronizados.
@@ -461,6 +523,8 @@ sintética (`simulacion.py`) dobla los dedos y se comprueba, entre otras cosas:
 | Aparece "Sin cámara" | Cerrar otras aplicaciones que la estén usando (Zoom, Teams, etc.). Mientras tanto se puede tocar con el teclado del PC. |
 | No hay sonido | Revisar el dispositivo de salida del sistema. Si se desconectan unos audífonos, el sonido se reabre solo en unos segundos en el nuevo dispositivo. |
 | La grabación no tiene sonido dentro del vídeo | OpenCV no puede meter audio en el `.mp4`: el audio está en el `.wav` del mismo nombre y se unen en cualquier editor (por ejemplo, Clipchamp en Windows). |
+| La app arranca con una configuración rara | Se recuerdan los ajustes de la última vez: arrancar con `--ajustes-de-fabrica` o borrar `ajustes.json`. |
+| En Ritmo siempre sale «tarde» o «temprano» | Terminar una canción en Ritmo y pulsar `L` para corregir el retraso de ese equipo. |
 | Algo raro pasó durante el uso | Revisar `piano_aereo.log`, que registra la cámara, el audio y cualquier error de la última sesión. |
 
 ## Limitaciones

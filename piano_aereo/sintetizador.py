@@ -173,6 +173,7 @@ class MotorAudio:
         self._t_revision = 0.0
         self._fallos_callback = 0
         self.toma: Optional[List[np.ndarray]] = None  # bloques de salida mientras se graba
+        self._recientes = np.zeros(4096, dtype=np.float32)  # últimas muestras, para el espectro
         if activo:
             self._abrir()
         self._sintetizar_muestras()
@@ -274,17 +275,28 @@ class MotorAudio:
                 mezcla[:n, 1] += trozo * voz.der
                 voz.pos += n
             self._colas = [v for v in self._colas if v.pos < len(v.muestra) and v.ganancia > 1e-3]
+            # Las voces cuya muestra ya terminó no suenan: se retiran.
+            if any(v.pos >= len(v.muestra) for v in self._voces.values()):
+                self._voces = {k: v for k, v in self._voces.items() if v.pos < len(v.muestra)}
         # tanh actúa de limitador suave: los acordes no saturan con chasquidos.
         salida = np.tanh(mezcla * self.volumen)
         toma = self.toma
         if toma is not None:
             toma.append(salida.copy())
+        # Se sustituye el arreglo entero (no se modifica): leerlo desde otro hilo es seguro.
+        n = len(self._recientes)
+        self._recientes = np.concatenate((self._recientes, salida.mean(axis=1)))[-n:]
         return salida
 
+    def recientes(self) -> np.ndarray:
+        """Las últimas muestras que salieron por los altavoces (mono)."""
+        return self._recientes
+
     # ------------------------------------------------------------------ notas
-    def tocar(self, voz: Hashable, nota: str, fuerza: float = 0.8, paneo: float = 0.0) -> None:
+    def tocar(self, voz: Hashable, nota: str, fuerza: float = 0.8, paneo: float = 0.0,
+              timbre: Optional[str] = None) -> None:
         """Hace sonar ``nota`` en la voz indicada (una voz = un dedo)."""
-        muestra = self._muestras.get((self.timbre, nota))
+        muestra = self._muestras.get((timbre or self.timbre, nota))
         if muestra is None:
             return
         angulo = (float(np.clip(paneo, -1.0, 1.0)) + 1.0) * np.pi / 4.0

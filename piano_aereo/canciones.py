@@ -207,6 +207,8 @@ class Ritmo:
         self.combo = 0
         self.mejor_combo = 0
         self.conteo = {"perfecto": 0, "bien": 0, "fallo": 0}
+        # Desfase de cada nota acertada, en s: positivo = se tocó tarde.
+        self.desfases: Dict[int, float] = {}
 
     def pulso(self, ahora: float) -> float:
         return (ahora - self.t0) / self.seg_pulso - self.ENTRADA
@@ -236,6 +238,7 @@ class Ritmo:
             if self.cancion.notas[i].nota == nota:
                 grado = "perfecto" if abs(self.instante(i) - t) <= self.v_perfecto else "bien"
                 self.estados[i] = grado
+                self.desfases[i] = t - self.instante(i)
                 self.conteo[grado] += 1
                 self.combo += 1
                 self.mejor_combo = max(self.mejor_combo, self.combo)

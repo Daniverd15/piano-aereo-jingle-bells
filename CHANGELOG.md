@@ -1,5 +1,22 @@
 # Registro de cambios
 
+## [1.4.0] — 2026-10-14
+
+### Añadido
+- Datos de cada interpretación en CSV (`grabaciones/datos_*.csv`) al terminar
+  una canción en Guía o Ritmo, y `scripts/analizar_sesion.py` para analizarlos
+  (puntería temporal, aciertos por dedo y evolución entre sesiones).
+- Gráfico de puntería en los resultados del modo Ritmo y **calibración
+  automática del retraso** de la cámara con `L` (mediana de los desfases).
+- Espectro de frecuencias en vivo con `O` (FFT con ventana de Hann e
+  interpolación del pico) y nombre de la nota dominante.
+- Árbol de Navidad que se adorna con los aciertos, estrella, fuegos
+  artificiales y fanfarria de campanas al terminar.
+- Gesto de puño en la pantalla de resultados para repetir la canción.
+- Ajustes recordados entre sesiones (`ajustes.json`, `--ajustes-de-fabrica`).
+- La nieve se aparta de las puntas de los dedos.
+- 16 pruebas nuevas (67 en total); las pruebas escriben solo en carpetas temporales.
+
 ## [1.3.0] — 2026-10-14
 
 ### Añadido

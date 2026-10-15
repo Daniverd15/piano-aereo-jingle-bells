@@ -28,8 +28,9 @@ def _nombre(prefijo: str) -> str:
     return time.strftime(prefijo + "_%Y-%m-%d_%H-%M-%S")
 
 
-def guardar_captura(lienzo: np.ndarray, carpeta: Path = CARPETA) -> Path:
+def guardar_captura(lienzo: np.ndarray, carpeta: Optional[Path] = None) -> Path:
     """Guarda la pantalla actual como PNG y devuelve la ruta."""
+    carpeta = carpeta if carpeta is not None else CARPETA
     carpeta.mkdir(parents=True, exist_ok=True)
     ruta = carpeta / (_nombre("captura") + ".png")
     if not cv2.imwrite(str(ruta), lienzo):
@@ -42,8 +43,8 @@ class Grabadora:
 
     FPS = 30
 
-    def __init__(self, carpeta: Path = CARPETA) -> None:
-        self.carpeta = carpeta
+    def __init__(self, carpeta: Optional[Path] = None) -> None:
+        self.carpeta = carpeta if carpeta is not None else CARPETA
         self._video = None
         self._audio = None
         self._base: Optional[Path] = None

@@ -27,6 +27,8 @@ VERDE: Color = (120, 225, 90)
 ROJO: Color = (70, 70, 240)
 
 MODOS = (("1", "libre", "Libre"), ("2", "guia", "Guía"), ("3", "ritmo", "Ritmo"), ("4", "demo", "Demo"))
+# Del nivel más bajo al más alto: azul, verde, amarillo, naranja.
+_TONO_ESPECTRO = ((180, 120, 60), (120, 200, 90), (63, 210, 255), (40, 140, 255))
 COLOR_MANO = {"izq": (70, 135, 40), "der": (175, 95, 35)}  # fondo del número de dedo: verde y azul
 CARTELES = {"perfecto": ("¡Perfecto!", DORADO), "bien": ("Bien", VERDE), "fallo": ("Fallo", ROJO)}
 COLOR_NOTA = {"S": DORADO, "A": VERDE, "B": (241, 196, 46), "C": (28, 159, 255), "D": ROJO}
@@ -49,6 +51,8 @@ AYUDA = (
     ("A", "Asistencia: perdona los toques que caen al borde de la tecla"),
     ("R   F   E", "Reiniciar  ·  Pantalla completa  ·  Esqueleto de la mano"),
     ("G   I", "Grabar vídeo y audio  ·  Guardar captura de pantalla"),
+    ("O   L", "Espectro de frecuencias  ·  Corregir el retraso (tras el modo Ritmo)"),
+    ("Puño", "En la pantalla de resultados, cierra la mano 1 s para repetir"),
     ("Z X C V B N M , . /", "Tocar las diez teclas con el teclado del PC"),
     ("H   Q", "Esta ayuda  ·  Salir"),
 )
@@ -115,9 +119,20 @@ class Interfaz:
         lienzo = cv2.resize(imagen, (config.ANCHO, config.ALTO), interpolation=cv2.INTER_LINEAR)
         return cv2.convertScaleAbs(lienzo, alpha=0.72, beta=0)
 
-    def nieve(self, lienzo: np.ndarray, dt: float) -> None:
+    def nieve(self, lienzo: np.ndarray, dt: float, puntas: Sequence[Tuple[float, float]] = ()) -> None:
+        """Copos que caen; los que pasan cerca de la punta de un dedo se apartan."""
         copos = self._nieve
         copos[:, 1] = (copos[:, 1] + dt * (0.04 + 0.06 * copos[:, 2])) % 1.0
+        if len(puntas):
+            px = copos[:, 0] * config.ANCHO
+            py = copos[:, 1] * self.teclado.y
+            for x, y in puntas:
+                dx, dy = px - x, py - y
+                distancia = np.hypot(dx, dy)
+                cerca = distancia < 60
+                empuje = (60 - distancia[cerca]) * 6.0 * dt / config.ANCHO
+                copos[cerca, 0] += np.sign(dx[cerca] + 1e-6) * empuje
+            copos[:, 0] %= 1.0
         for x, y, tam in copos:
             centro = (int(x * config.ANCHO), int(y * self.teclado.y))
             cv2.circle(lienzo, centro, 1 + int(tam * 2.5), (235, 235, 235), -1, cv2.LINE_AA)
@@ -398,31 +413,84 @@ class Interfaz:
         resumen = "Precisión %d %%   ·   Tiempo %d s   ·   Mejor racha %d" % (
             round(guia.precision * 100), round(guia.duracion(ahora)), guia.mejor_racha)
         escribir(lienzo, resumen, cx, cy + 36, 21, BLANCO, "centro")
-        escribir(lienzo, "R  repetir     ·     S  otra canción     ·     3  modo ritmo",
+        escribir(lienzo, "R o puño 1 s  repetir     ·     S  otra canción     ·     3  modo ritmo",
                  cx, cy + 92, 17, GRIS, "centro")
 
-    def panel_final_ritmo(self, lienzo: np.ndarray, ritmo: Ritmo) -> None:
-        cx, cy = config.ANCHO // 2, 310
-        caja(lienzo, cx - 330, cy - 180, cx + 330, cy + 180, FONDO_PANEL, 0.93, 26)
-        escribir(lienzo, "¡Canción terminada!", cx, cy - 162, 34, BLANCO, "centro", True)
+    def panel_final_ritmo(self, lienzo: np.ndarray, ritmo: Ritmo, correccion: Optional[float] = None) -> None:
+        """Resultados del modo Ritmo, con un gráfico de cuánto se adelantó o atrasó cada nota."""
+        from .sesion import describir_desfase
+
+        cx, cy = config.ANCHO // 2, 330
+        caja(lienzo, cx - 330, cy - 215, cx + 330, cy + 213, FONDO_PANEL, 0.93, 26)
+        escribir(lienzo, "¡Canción terminada!", cx, cy - 202, 34, BLANCO, "centro", True)
         # Calificación en grande a la izquierda.
         letra = ritmo.calificacion
         tono = COLOR_NOTA[letra]
-        cv2.circle(lienzo, (cx - 215, cy - 20), 68, tono, -1, cv2.LINE_AA)
-        escribir(lienzo, letra, cx - 215, cy - 78, 88, TINTA, "centro", True)
+        cv2.circle(lienzo, (cx - 215, cy - 75), 62, tono, -1, cv2.LINE_AA)
+        escribir(lienzo, letra, cx - 215, cy - 129, 82, TINTA, "centro", True)
         for k in range(5):
-            _estrella(lienzo, cx - 40 + k * 62, cy - 62, 25, DORADO if k < ritmo.estrellas else APAGADO)
-        escribir(lienzo, "%s puntos" % _miles(ritmo.puntos), cx + 84, cy - 22, 34, BLANCO, "centro", True)
+            _estrella(lienzo, cx - 40 + k * 62, cy - 118, 24, DORADO if k < ritmo.estrellas else APAGADO)
+        escribir(lienzo, "%s puntos" % _miles(ritmo.puntos), cx + 84, cy - 84, 34, BLANCO, "centro", True)
         escribir(lienzo, "Precisión %d %%   ·   Mejor combo %d" % (
-            round(ritmo.precision * 100), ritmo.mejor_combo), cx + 84, cy + 30, 19, BLANCO, "centro")
+            round(ritmo.precision * 100), ritmo.mejor_combo), cx + 84, cy - 33, 19, BLANCO, "centro")
         x = cx - 250
         for grado, etiqueta in (("perfecto", "Perfectas"), ("bien", "Bien"), ("fallo", "Falladas")):
             tono = CARTELES[grado][1]
-            cv2.circle(lienzo, (x, cy + 97), 7, tono, -1, cv2.LINE_AA)
-            x += 16 + escribir(lienzo, "%s  %d" % (etiqueta, ritmo.conteo[grado]), x + 16, cy + 84, 20, BLANCO)
+            cv2.circle(lienzo, (x, cy + 23), 7, tono, -1, cv2.LINE_AA)
+            x += 16 + escribir(lienzo, "%s  %d" % (etiqueta, ritmo.conteo[grado]), x + 16, cy + 10, 20, BLANCO)
             x += 44
-        escribir(lienzo, "R  repetir     ·     D  dificultad     ·     S  otra canción",
-                 cx, cy + 138, 17, GRIS, "centro")
+        self._grafico_punteria(lienzo, ritmo, cx - 290, cy + 62, cx + 290, cy + 140)
+        resumen = describir_desfase(ritmo.desfases.values())
+        if correccion is not None:
+            resumen += "   ·   L  corregir el retraso (%+d ms)" % round(1000 * correccion)
+        escribir(lienzo, resumen, cx, cy + 150, 17, BLANCO, "centro")
+        escribir(lienzo, "R o puño 1 s  repetir     ·     D  dificultad     ·     S  otra canción",
+                 cx, cy + 180, 16, GRIS, "centro")
+
+    def _grafico_punteria(self, lienzo: np.ndarray, ritmo: Ritmo, x0: int, y0: int, x1: int, y1: int) -> None:
+        """Una marca por nota: arriba = tarde, abajo = temprano; las falladas, en rojo abajo."""
+        medio = (y0 + y1) // 2
+        escala = (y1 - y0) / 2.0 / ritmo.v_bien
+        alto_perfecto = int(ritmo.v_perfecto * escala)
+        caja(lienzo, x0, y0, x1, y1, (55, 45, 40), 0.9, 6)
+        caja(lienzo, x0, medio - alto_perfecto, x1, medio + alto_perfecto, (70, 90, 95), 0.9)
+        cv2.line(lienzo, (x0, medio), (x1, medio), GRIS, 1, cv2.LINE_AA)
+        escribir(lienzo, "tarde", x0 - 8, y0 - 4, 12, GRIS, "der")
+        escribir(lienzo, "temprano", x0 - 8, y1 - 14, 12, GRIS, "der")
+        n = max(len(ritmo.estados) - 1, 1)
+        for i, estado in enumerate(ritmo.estados):
+            x = int(x0 + 6 + (x1 - x0 - 12) * i / n)
+            if estado == "fallo":
+                cv2.line(lienzo, (x, y1 - 7), (x, y1 - 1), ROJO, 2, cv2.LINE_AA)
+            elif i in ritmo.desfases:
+                y = int(np.clip(medio - ritmo.desfases[i] * escala, y0 + 3, y1 - 3))
+                cv2.circle(lienzo, (x, y), 3, CARTELES[estado][1], -1, cv2.LINE_AA)
+
+    def espectro(self, lienzo: np.ndarray, niveles: np.ndarray,
+                 pico: Optional[Tuple[float, str]]) -> None:
+        """Panel del análisis de Fourier: barras por banda de frecuencia y nota dominante."""
+        x0, y0, x1, y1 = 14, 122, 330, 250
+        caja(lienzo, x0, y0, x1, y1, FONDO_PANEL, 0.8, 14)
+        escribir(lienzo, "Espectro (FFT)", x0 + 14, y0 + 8, 15, BLANCO, negrita=True)
+        texto = "%s  ·  %d Hz" % (pico[1], round(pico[0])) if pico else "silencio"
+        escribir(lienzo, texto, x1 - 14, y0 + 8, 15, DORADO if pico else GRIS, "der", True)
+        bx0, by1, alto = x0 + 14, y1 - 22, 70
+        ancho_barra = (x1 - x0 - 28) / float(len(niveles))
+        for b, nivel in enumerate(niveles):
+            if nivel > 0.02:
+                bx = int(bx0 + b * ancho_barra)
+                tono = _TONO_ESPECTRO[min(int(nivel * len(_TONO_ESPECTRO)), len(_TONO_ESPECTRO) - 1)]
+                caja(lienzo, bx, by1 - int(alto * nivel), bx + max(int(ancho_barra) - 1, 1), by1, tono)
+        for frecuencia, etiqueta in ((110, "110"), (220, "220"), (440, "440"), (880, "880"), (1760, "1760 Hz")):
+            fraccion = np.log(frecuencia / 90.0) / np.log(2200.0 / 90.0)
+            escribir(lienzo, etiqueta, bx0 + fraccion * (x1 - x0 - 28), by1 + 3, 11, GRIS, "centro")
+
+    def progreso_puno(self, lienzo: np.ndarray, centro: Tuple[float, float], progreso: float) -> None:
+        """Anillo que se completa mientras se mantiene el puño cerrado."""
+        x, y = int(centro[0]), int(centro[1])
+        cv2.circle(lienzo, (x, y), 46, FONDO_PANEL, 6, cv2.LINE_AA)
+        cv2.ellipse(lienzo, (x, y), (46, 46), -90, 0, 360 * progreso, DORADO, 6, cv2.LINE_AA)
+        escribir(lienzo, "repetir", x, y + 52, 15, BLANCO, "centro", True)
 
     def indicador_grabacion(self, lienzo: np.ndarray, segundos: float, ahora: float) -> None:
         """Punto rojo parpadeante y tiempo grabado (no aparece en el propio vídeo)."""
@@ -436,7 +504,7 @@ class Interfaz:
 
     def ayuda(self, lienzo: np.ndarray) -> None:
         x0, y0, x1 = 230, 78, config.ANCHO - 230
-        paso = 29
+        paso = 27
         caja(lienzo, x0, y0, x1, y0 + 30 + paso * len(AYUDA), FONDO_PANEL, 0.94, 24)
         y = y0 + 16
         for tecla, descripcion in AYUDA:

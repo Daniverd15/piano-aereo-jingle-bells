@@ -60,6 +60,7 @@ DIFICULTADES = {
 }
 # Retraso medio entre mover el dedo y que la cámara entregue el fotograma.
 RETRASO_CAMARA = 0.05
+RETRASO_MAX = 0.25  # tope de la corrección automática
 # Asistencia: un toque que cae junto a la tecla esperada, a menos de esta
 # fracción del ancho de tecla, cuenta como si hubiera caído en ella.
 IMAN = 0.3

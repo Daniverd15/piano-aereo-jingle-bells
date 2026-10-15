@@ -202,7 +202,27 @@ ante fenómenos que el simulador no modela, como el desenfoque por movimiento al
 desplazar la mano rápido. Este matiz es honesto: la ablación mide lo que el
 simulador representa, no todo lo que puede pasar con una cámara real.
 
-## 7. Modo Ritmo: sincronización
+## 7. Datos reales y calibración
+
+La evaluación del apartado 6 usa datos sintéticos. Para cerrar el ciclo con
+datos reales, la aplicación guarda al final de cada canción un CSV con una fila
+por nota tocada: dedo, tecla, nota esperada, resultado y, en el modo Ritmo, el
+**desfase** con signo (cuánto antes o después del instante exacto). El script
+`scripts/analizar_sesion.py` resume esos datos:
+
+- distribución de los desfases;
+- proporción de aciertos por dedo;
+- error medio absoluto por sesión, para ver si hay aprendizaje.
+
+Los mismos desfases permiten **calibrar** el retraso de la cámara del apartado
+8, que era un supuesto. Si la mediana de los desfases de una canción supera
+25 ms (con al menos 10 notas acertadas), la tecla `L` suma esa mediana al
+retraso compensado y lo guarda. Se usa la mediana porque es robusta: un toque
+adelantado a propósito no desplaza la estimación, mientras que la media sí lo
+haría. Así, el supuesto de 50 ms se sustituye por una medida del equipo y de la
+persona que toca.
+
+## 8. Modo Ritmo: sincronización
 
 El juego califica cada nota por su error temporal: *Perfecto* hasta ±0,12 s y
 *Bien* hasta ±0,24 s en dificultad normal. Para que el juicio sea justo se
@@ -219,9 +239,9 @@ melodía) se renderiza de una vez como una única onda. Así todo suena
 sincronizado con precisión de muestra, en lugar de depender de la frecuencia
 del bucle de dibujo.
 
-## 8. Verificación del software
+## 9. Verificación del software
 
-- **51 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
+- **67 pruebas automáticas** (`python -m pytest`), sin cámara ni altavoces:
   - detector, partitura, síntesis, mezclador y modos de juego;
   - de extremo a extremo, tocar el coro completo sin errores en los modos Guía y
     Ritmo, y en la forma «cinco dedos» sin mover la mano;
@@ -239,15 +259,18 @@ del bucle de dibujo.
   cámara (incluida la imagen negra por tapa cerrada) y audio antes de una
   presentación.
 
-## 9. Limitaciones y trabajo futuro
+## 10. Limitaciones y trabajo futuro
 
 - **Los datos de evaluación son sintéticos.** Sirven para comparar variantes y
   elegir parámetros con criterio, pero las cifras absolutas no garantizan el
   mismo rendimiento con manos reales. El siguiente paso es grabar sesiones
   reales (puntos de MediaPipe y etiquetas de cuándo se quiso tocar) y repetir la
   evaluación con ellas.
-- **El retraso de la cámara (50 ms) es un supuesto.** Se puede medir grabando
-  un toque con una cámara de alta velocidad, o con un clic sonoro sincronizado.
+- **El retraso de la cámara parte de un supuesto (50 ms)**, que la calibración
+  del apartado 7 ajusta con los toques de la propia persona. Esa calibración
+  mezcla el retraso del equipo con la costumbre de quien toca (adelantarse o
+  atrasarse); para separarlos haría falta una medida independiente, como grabar
+  un toque con una cámara de alta velocidad.
 - **Acordes:** como máximo dos dedos a la vez por mano, por el rechazo de modo común.
 - **Iluminación:** la detección de MediaPipe empeora a contraluz o con poca luz.
 - **Teclado:** solo teclas blancas (Do mayor), suficiente para *Jingle Bells*.

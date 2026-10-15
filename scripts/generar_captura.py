@@ -13,7 +13,14 @@ import cv2
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
+import tempfile  # noqa: E402
+
+from piano_aereo import grabacion, sesion  # noqa: E402
 from piano_aereo.app import App, crear_argumentos  # noqa: E402
+
+# Las canciones simuladas terminan y guardarían sus datos: que vayan a una carpeta temporal.
+_TEMPORAL = Path(tempfile.mkdtemp(prefix="piano_capturas_"))
+grabacion.CARPETA = sesion.CARPETA = _TEMPORAL
 from piano_aereo.simulacion import mano_sintetica  # noqa: E402
 
 DT = 1 / 30.0

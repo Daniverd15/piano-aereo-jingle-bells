@@ -11,14 +11,18 @@ from typing import Dict, Hashable, Iterable, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from . import config
+from . import ajustes, config
+from .adornos import Arbol, Fuegos
 from .asignacion import CincoDedos
 from .canciones import CANCIONES, Demo, Guia, Ritmo
+from .espectro import analizar
+from .gestos import GestoPuno
 from .grabacion import Grabadora, guardar_captura
 from .interfaz import Interfaz
 from .notas import Teclado, solfeo
 from .sintetizador import MotorAudio, acompanamiento
-from .toques import DetectorToques, Toque
+from .sesion import Sesion, correccion_sugerida
+from .toques import DEDOS, DetectorToques, Toque
 
 log = logging.getLogger(__name__)
 
@@ -27,8 +31,27 @@ _ESC = 27
 _FONDO = "fondo"  # voz del motor de audio reservada al acompañamiento
 
 
+def completar_argumentos(args: argparse.Namespace, guardados: Optional[dict] = None) -> argparse.Namespace:
+    """Rellena lo que no se pasó por línea de órdenes con los ajustes guardados o los de fábrica."""
+    g = guardados or {}
+    if args.dificultad is None:
+        args.dificultad = g.get("dificultad", "normal")
+    if args.timbre is None:
+        args.timbre = g.get("timbre", "piano")
+    if args.sensibilidad is None:
+        args.sensibilidad = g.get("sensibilidad", config.SENSIBILIDAD)
+    args.sensibilidad = min(max(args.sensibilidad, config.SENSIBILIDAD_MIN), config.SENSIBILIDAD_MAX)
+    args.cinco_dedos = args.cinco_dedos or g.get("cinco_dedos", False)
+    args.sin_asistencia = args.sin_asistencia or not g.get("asistencia", True)
+    args.sin_acompanamiento = args.sin_acompanamiento or not g.get("acompanar", True)
+    args.retraso_camara = g.get("retraso_camara", config.RETRASO_CAMARA)
+    return args
+
+
 class App:
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: argparse.Namespace, guardados: Optional[dict] = None) -> None:
+        args = completar_argumentos(args, guardados)
+        self.ajustes_recuperados = bool(guardados)
         self.teclado = Teclado(
             config.NOTAS_TECLADO, config.TECLADO_MARGEN, config.TECLADO_Y,
             config.ANCHO - 2 * config.TECLADO_MARGEN, config.TECLADO_ALTO,
@@ -66,6 +89,15 @@ class App:
         self.grabadora = Grabadora()
         self._lienzo: Optional[np.ndarray] = None  # última pantalla dibujada
         self._errores = 0
+        self.retraso_camara = args.retraso_camara  # ajustable con la calibración (tecla L)
+        self.sesion = Sesion()
+        self.puno = GestoPuno()
+        self._progreso_puno = 0.0
+        self.arbol = Arbol(self.teclado.centro(len(self.teclado) - 1), 215, 300)
+        self.fuegos = Fuegos()
+        self._fanfarria: List[Tuple[float, str]] = []  # (instante, nota) de la celebración
+        self._celebrado = False
+        self.ver_espectro = False
         self.cambiar_modo(args.modo, time.perf_counter())
 
     # ----------------------------------------------------------------- estado
@@ -91,6 +123,10 @@ class App:
         self.fallos.clear()
         self.notas_pc = []
         self.interfaz.limpiar_efectos()
+        self.fuegos.limpiar()
+        self._fanfarria = []
+        self._celebrado = False
+        self.sesion.reiniciar(ahora)
         _, bpm, ventanas = config.DIFICULTADES[self.dificultad]
         con_fondo = modo in ("ritmo", "demo")
         if con_fondo:
@@ -139,16 +175,31 @@ class App:
         self.audio.tocar(voz, nota, fuerza, self.teclado.paneo(tecla))
         self.pulsadas[voz] = tecla
         chispas = 12
+        esperada, resultado, desfase = "", "libre", None
         if self.modo == "guia":
-            if self.guia.pulsar(nota, ahora) is False:
+            esperada = self.guia.objetivo or ""
+            correcto = self.guia.pulsar(nota, ahora)
+            if correcto is False:
                 self.fallos[tecla] = ahora
+            resultado = {True: "acierto", False: "error", None: "libre"}[correcto]
         elif self.modo == "ritmo":
             acierto = self.ritmo.pulsar(nota, ahora if t_juicio is None else t_juicio)
             chispas = 6
+            resultado = "sobra"
             if acierto is not None:
                 self.interfaz.cartel(tecla, acierto[1], ahora)
                 chispas = 32 if acierto[1] == "perfecto" else 18
+                esperada, resultado = nota, acierto[1]
+                desfase = round(1000 * self.ritmo.desfases[acierto[0]], 1)
         self.interfaz.chispear(tecla, chispas)
+        if isinstance(voz, tuple) and voz[0] in ("izq", "der"):
+            mano, dedo = voz[0], DEDOS[voz[1]]
+        else:
+            mano, dedo = "teclado", "-"
+        self.sesion.anotar(
+            ahora, modo=self.modo, forma="cinco dedos" if self.cinco_dedos else "apuntar", mano=mano,
+            dedo=dedo, nota_tocada=nota, nota_esperada=esperada, resultado=resultado,
+            desfase_ms=desfase, fuerza=round(fuerza, 2))
 
     def soltar(self, voz: Hashable) -> None:
         self.audio.soltar(voz)
@@ -161,6 +212,15 @@ class App:
         if manos:
             self._t_manos = t
         eventos = self.detector.actualizar(manos, t)
+        # Gesto de puño: solo en la pantalla de resultados, para repetir la canción.
+        if self.en_resultados(t):
+            self._progreso_puno, hecho = self.puno.actualizar(manos, t)
+            if hecho:
+                self.cambiar_modo(self.modo, t)
+                self.avisar("¡Otra vez! Canción reiniciada con el puño", t)
+                return
+        else:
+            self._progreso_puno = 0.0
         # Se recalcula siempre, para que cambiar de forma de tocar sea instantáneo;
         # con un dedo pulsado, la posición de esa mano queda fija.
         self.cinco.actualizar(self.detector.lecturas)
@@ -169,13 +229,61 @@ class App:
                 self.soltar(toque.voz)
                 continue
             # El dedo se movió un poco antes de que llegara el fotograma.
-            t_real = t - config.RETRASO_CAMARA
+            t_real = t - self.retraso_camara
             tecla = self.tecla_para(toque, t_real)
             if tecla is not None:
                 self.tocar(toque.voz, tecla, toque.fuerza, t, t_real)
 
+    def en_resultados(self, ahora: float) -> bool:
+        """Si la canción terminó y se está mostrando el panel de resultados."""
+        return ((self.modo == "guia" and self.guia.terminada)
+                or (self.modo == "ritmo" and self.ritmo.terminada(ahora)))
+
+    def _celebrar(self, ahora: float) -> None:
+        """Al terminar una canción: fuegos artificiales, fanfarria y datos a CSV."""
+        self._celebrado = True
+        self.fuegos.celebrar(ahora, config.ANCHO, config.TECLADO_Y)
+        for k, nota in enumerate(("C4", "E4", "G4", "C4", "E4", "G4")):
+            self._fanfarria.append((ahora + (0.12 * k if k < 3 else 0.5), nota))
+        if self.sesion.filas:
+            try:
+                ruta = self.sesion.guardar(self.cancion.nombre)
+                self.avisar("Datos de la interpretación guardados en grabaciones/ (CSV)", ahora, 4.0)
+                log.info("Datos de la sesión guardados en %s", ruta)
+            except OSError as exc:
+                log.warning("No se pudieron guardar los datos de la sesión: %s", exc)
+
+    def calibrar(self, ahora: float) -> None:
+        """Aplica la corrección de retraso que sugieren los desfases del modo Ritmo."""
+        if not (self.modo == "ritmo" and self.ritmo.terminada(ahora)):
+            self.avisar("La calibración se hace al terminar una canción en el modo Ritmo (3)", ahora, 3.0)
+            return
+        correccion = correccion_sugerida(self.ritmo.desfases.values())
+        if correccion is None:
+            self.avisar("No hace falta corregir: tocas a tiempo (o hay pocas notas acertadas)", ahora, 3.0)
+            return
+        anterior = self.retraso_camara
+        self.retraso_camara = float(np.clip(anterior + correccion, 0.0, config.RETRASO_MAX))
+        self.ritmo.desfases = {i: d - correccion for i, d in self.ritmo.desfases.items()}
+        ajustes.guardar(self.ajustes_actuales())
+        self.avisar("Retraso corregido: %d → %d ms (se recordará)" % (
+            round(1000 * anterior), round(1000 * self.retraso_camara)), ahora, 4.0)
+
+    def ajustes_actuales(self) -> dict:
+        return {
+            "sensibilidad": round(self.detector.umbral, 3), "cinco_dedos": self.cinco_dedos,
+            "timbre": self.audio.timbre, "dificultad": self.dificultad, "asistencia": self.asistencia,
+            "acompanar": self.acompanar, "retraso_camara": round(self.retraso_camara, 3),
+        }
+
     def avanzar(self, ahora: float, dt: float) -> None:
         """Lógica que depende del tiempo y no de la cámara."""
+        if not self._celebrado and self.en_resultados(ahora):
+            self._celebrar(ahora)
+        for k, (cuando, nota) in enumerate(list(self._fanfarria)):
+            if ahora >= cuando:
+                self.audio.tocar(("fiesta", nota, cuando), nota, 0.7, 0.0, timbre="campanas")
+                self._fanfarria.remove((cuando, nota))
         for voz, t_fin in list(self.notas_pc):
             if ahora >= t_fin:
                 self.soltar(voz)
@@ -234,6 +342,10 @@ class App:
             self.cinco_dedos = not self.cinco_dedos
             self.avisar("Forma de tocar: " + ("cinco dedos (cada dedo, una tecla)" if self.cinco_dedos
                                               else "apuntar con el dedo a la tecla"), ahora, 3.0)
+        elif c == "o":
+            self.ver_espectro = not self.ver_espectro
+        elif c == "l":
+            self.calibrar(ahora)
         elif c == "a":
             self.asistencia = not self.asistencia
             self.avisar("Asistencia: " + ("activada" if self.asistencia else "desactivada"), ahora)
@@ -295,13 +407,21 @@ class App:
             progreso = guia.indice / float(len(cancion))
 
         lienzo = ui.fondo(self._imagen)
-        ui.nieve(lienzo, dt)
+        ui.nieve(lienzo, dt, [lectura.punta for lectura in self.detector.lecturas])
         ui.carriles(lienzo, objetivo, autopista=con_pista)
         if con_pista:
             ui.pista(lienzo, cancion, self.pulso_vis, desde, estados)
         asignadas = self.cinco.teclas() if self.cinco_dedos else None
         ui.dibujar_teclado(lienzo, self.pulsadas.values(), objetivo, self.fallos, ahora,
                            con_teclas_pc=not self._camara_activa(), asignadas=asignadas)
+        if con_pista:
+            if self.modo == "guia":
+                avance = guia.indice / float(len(cancion))
+            elif self.modo == "ritmo":
+                avance = ritmo.aciertos / float(len(cancion))  # el árbol se adorna con los aciertos
+            else:
+                avance = self.pulso_vis / cancion.pulsos_totales
+            self.arbol.dibujar(lienzo, avance, ahora, self.pulso_vis, self.en_resultados(ahora))
         ui.chispas(lienzo, dt)
         ui.carteles(lienzo, ahora)
         siguiente = self._siguiente_tecla()
@@ -319,7 +439,8 @@ class App:
 
         aviso, hasta = self._aviso
         if ahora < hasta:
-            ui.aviso(lienzo, aviso, 130 if con_pista else 74)
+            # En los resultados la fila de la letra queda libre; debajo estaría el panel.
+            ui.aviso(lienzo, aviso, 130 if con_pista and not self.en_resultados(ahora) else 74)
         if con_pista:
             ui.letra(lienzo, cancion, actual)
         en_cuenta_atras = self.modo in ("ritmo", "demo") and self.pulso_vis < 0
@@ -332,7 +453,15 @@ class App:
         elif self.modo == "ritmo":
             ui.marcador_ritmo(lienzo, ritmo)
             if ritmo.terminada(ahora):
-                ui.panel_final_ritmo(lienzo, ritmo)
+                ui.panel_final_ritmo(lienzo, ritmo, correccion_sugerida(ritmo.desfases.values()))
+        self.fuegos.dibujar(lienzo, ahora, dt)
+        if self._progreso_puno > 0.05 and self.puno.centro is not None:
+            ui.progreso_puno(lienzo, self.puno.centro, self._progreso_puno)
+        if self.ver_espectro:
+            if self.audio.disponible:
+                ui.espectro(lienzo, *analizar(self.audio.recientes(), self.audio.fm))
+            else:
+                ui.espectro(lienzo, np.zeros(1), None)
         estado = self._estado_camara(ahora)
         if estado and not en_cuenta_atras:
             ui.aviso(lienzo, estado, 330)
@@ -405,6 +534,9 @@ class App:
         self._t_manos = anterior = time.perf_counter()
         # La canción empieza al abrirse la ventana, no al crear la aplicación.
         self.cambiar_modo(self.modo, anterior)
+        if self.ajustes_recuperados:
+            self.avisar("Ajustes de la última vez recuperados (--ajustes-de-fabrica para empezar de cero)",
+                        anterior, 3.5)
         try:
             while True:
                 ahora = self._paso(anterior)
@@ -417,6 +549,7 @@ class App:
         except KeyboardInterrupt:
             pass
         finally:
+            ajustes.guardar(self.ajustes_actuales())
             if self.grabadora.activa:
                 self.grabadora.detener()
             if self.vision is not None:
@@ -521,12 +654,13 @@ def crear_argumentos() -> argparse.ArgumentParser:
     )
     p.add_argument("--modo", choices=MODOS, default="guia", help="modo inicial (por defecto: guia)")
     p.add_argument("--cancion", choices=list(CANCIONES), default="coro", help="coro o canción completa")
-    p.add_argument("--dificultad", choices=list(config.DIFICULTADES), default="normal",
-                   help="velocidad de los modos Ritmo y Demo")
-    p.add_argument("--timbre", choices=config.TIMBRES, default="piano")
+    p.add_argument("--dificultad", choices=list(config.DIFICULTADES), default=None,
+                   help="velocidad de los modos Ritmo y Demo (por defecto: normal)")
+    p.add_argument("--timbre", choices=config.TIMBRES, default=None, help="por defecto: piano")
     p.add_argument("--camara", type=int, default=0, help="índice de la cámara (0 = la del portátil)")
-    p.add_argument("--sensibilidad", type=float, default=config.SENSIBILIDAD,
-                   help="cuánto hay que doblar el dedo, de 0.10 (poco) a 0.40 (mucho)")
+    p.add_argument("--sensibilidad", type=float, default=None,
+                   help="cuánto hay que doblar el dedo, de 0.10 (poco) a 0.40 (mucho); por defecto %.2f"
+                   % config.SENSIBILIDAD)
     p.add_argument("--sin-asistencia", action="store_true",
                    help="no perdonar los toques que caen al borde de la tecla esperada")
     p.add_argument("--cinco-dedos", action="store_true",
@@ -537,6 +671,8 @@ def crear_argumentos() -> argparse.ArgumentParser:
     p.add_argument("--sin-espejo", action="store_true", help="no voltear la imagen como un espejo")
     p.add_argument("--sin-sonido", action="store_true")
     p.add_argument("--pantalla-completa", action="store_true")
+    p.add_argument("--ajustes-de-fabrica", action="store_true",
+                   help="no usar los ajustes guardados de la última vez")
     p.add_argument("--diagnostico", action="store_true",
                    help="comprobar cámara, modelo y audio, y salir")
     p.add_argument("--detalle", action="store_true", help="mostrar mensajes de diagnóstico")
@@ -564,5 +700,5 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     configurar_registro(args.detalle)
     if args.diagnostico:
         return diagnostico(args.camara)
-    args.sensibilidad = min(max(args.sensibilidad, config.SENSIBILIDAD_MIN), config.SENSIBILIDAD_MAX)
-    return App(args).ejecutar()
+    guardados = {} if args.ajustes_de_fabrica else ajustes.cargar()
+    return App(args, guardados).ejecutar()
