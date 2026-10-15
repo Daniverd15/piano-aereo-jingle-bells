@@ -1,7 +1,10 @@
 # Informe técnico — Piano Aéreo
 
-**Autor:** Daniel Enrique Villamizar Ramírez
-**Asignatura:** Ciencia de Datos
+| | |
+|---|---|
+| **Autor** | Daniel Enrique Villamizar Ramírez |
+| **Asignatura** | Ciencia de Datos |
+| **Semestre** | Sexto semestre |
 
 ## 1. Resumen
 

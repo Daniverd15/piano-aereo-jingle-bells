@@ -11,8 +11,11 @@ sigue las manos en tiempo real y, al doblar un dedo sobre una tecla, suena su
 nota. Para interpretar **Jingle Bells** ofrece un modo guiado, nota a nota, y un
 modo de ritmo al estilo de *Guitar Hero*, con notas que caen, combos y puntuación.
 
-**Autor:** Daniel Enrique Villamizar Ramírez
-**Asignatura:** Ciencia de Datos
+| | |
+|---|---|
+| **Autor** | Daniel Enrique Villamizar Ramírez |
+| **Asignatura** | Ciencia de Datos |
+| **Semestre** | Sexto semestre |
 
 ![Modo Ritmo](docs/captura_ritmo.png)
 
@@ -46,9 +49,10 @@ modo de ritmo al estilo de *Guitar Hero*, con notas que caen, combos y puntuaci�
 
 ## Objetivo
 
-Desarrollar una aplicación para portátil que permita tocar la canción *Jingle
-Bells* con los dedos, detectándolos con la cámara como si se tratara de un
-piano, usando únicamente Python.
+Proyecto de la asignatura Ciencia de Datos (sexto semestre): desarrollar una
+aplicación para portátil que permita tocar la canción *Jingle Bells* con los
+dedos, detectándolos con la cámara como si se tratara de un piano, usando
+únicamente Python.
 
 ## Características
 
