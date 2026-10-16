@@ -304,16 +304,16 @@ Las tolerancias son ±0,14 / ±0,28 s en fácil y ±0,10 / ±0,20 s en difícil.
 
 ```mermaid
 flowchart LR
-    A[Cámara<br/>1280x720] --> B[Recorte 16:9<br/>y espejo]
-    B --> C[MediaPipe<br/>Hand Landmarker]
-    C -->|21 puntos por mano| D[Detector de toques<br/>toques.py]
-    D -->|dedo pulsa / suelta| E[Asignación de tecla<br/>carriles o cinco dedos]
-    E --> F[Asistencia<br/>imán y anti-arrastre]
-    F --> G[Juego<br/>Guía / Ritmo]
-    F --> H[Sintetizador y mezclador<br/>sintetizador.py]
-    G --> I[Interfaz<br/>interfaz.py]
-    H --> J[Altavoces]
-    G --> K[(CSV de la sesión)]
+    A["Cámara 1280x720"] --> B["Recorte 16:9 y espejo"]
+    B --> C["MediaPipe Hand Landmarker"]
+    C -->|"21 puntos por mano"| D["Detector de toques"]
+    D -->|"dedo pulsa o suelta"| E["Asignación de tecla"]
+    E --> F["Asistencia"]
+    F --> G["Modos Guía y Ritmo"]
+    F --> H["Sintetizador y mezclador"]
+    G --> I["Interfaz"]
+    H --> J["Altavoces"]
+    G --> K[("CSV de la sesión")]
 ```
 
 ### 6.2 Hilos de ejecución
