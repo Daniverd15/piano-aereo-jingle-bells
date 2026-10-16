@@ -461,7 +461,7 @@ punta se desplaza (sobre todo la del pulgar). Esa posición se filtra y solo se
 actualiza mientras el dedo está quieto.
 
 *Asistencia de puntería:* en Guía y Ritmo, si un toque cae fuera de la tecla
-esperada, pero a menos de $0{,}3\,w$ de su borde, cuenta como si hubiera caído en ella.
+esperada, pero a menos de $0{,}3 \cdot w$ de su borde, cuenta como si hubiera caído en ella.
 
 **Forma «cinco dedos».** Cada mano cubre cinco teclas seguidas, centradas en la
 que queda bajo la mediana $\tilde{x}$ de sus puntas:
@@ -524,7 +524,7 @@ calcula en la retrollamada de `sounddevice`:
   $\cos\phi$ a la izquierda y $\sin\phi$ a la derecha. Las notas graves suenan
   más a la izquierda y las agudas más a la derecha.
 - **Apagado** exponencial al soltar el dedo ($\tau = 90$ ms), como el apagador de un piano.
-- **Limitador suave** $y = \tanh(g\,x)$, para que los acordes no saturen.
+- **Limitador suave** $y = \tanh(g x)$, para que los acordes no saturen.
 - **Baja latencia:** en Windows se prefiere WASAPI, de menor latencia que el
   controlador por defecto (MME); en el portátil de pruebas se midieron 22 ms.
 
@@ -593,9 +593,9 @@ desviado no arrastra la estimación.
 Con la tecla `O` se analizan las últimas $N = 4096$ muestras que salieron por
 los altavoces (85 ms a 48 kHz):
 
-1. **Ventana de Hann**, $w[n] = 0{,}5\,(1 - \cos\frac{2\pi n}{N-1})$, para reducir la fuga espectral.
+1. **Ventana de Hann**, $w[n] = 0{,}5 \left(1 - \cos\frac{2\pi n}{N-1}\right)$, para reducir la fuga espectral.
 2. **FFT real.** La amplitud de cada sinusoide se recupera como
-   $2|X_k| / (0{,}5\,N)$, porque la ventana reduce la ganancia a la mitad.
+   $2|X_k| / (0{,}5 \cdot N)$, porque la ventana reduce la ganancia a la mitad.
 3. **56 bandas en escala logarítmica** entre 90 y 2200 Hz, como las teclas de
    un piano: cada octava ocupa el mismo ancho. Se muestran en un rango de 60 dB.
 4. **Nota dominante.** El pico se refina con interpolación parabólica sobre el
