@@ -416,7 +416,7 @@ a la vez. A la caída de cada dedo se le resta la mediana de la caída de los
 otros dedos largos:
 
 ```math
-c_i' = c_i - \max\Big(0,\ \operatorname{mediana}_{\,j \in \{1..4\},\, j \neq i}\ c_j\Big)
+c_i' = c_i - \max\Big(0,\ \mathrm{mediana}_{\,j \in \{1..4\},\, j \neq i}\ c_j\Big)
 ```
 
 Si baja un solo dedo, la mediana de los demás es casi cero y $c_i'$ se
@@ -446,7 +446,7 @@ Así se ignora el dedo vecino que se arrastra por los tendones.
 **8. Fuerza del toque.** La velocidad de la caída se convierte en volumen:
 
 ```math
-\text{fuerza} = \operatorname{clip}\!\left(0{,}5 + \frac{\Delta c_i / \Delta t}{8},\ 0{,}5,\ 1\right)
+\text{fuerza} = \mathrm{clip}\!\left(0{,}5 + \frac{\Delta c_i / \Delta t}{8},\ 0{,}5,\ 1\right)
 ```
 
 Los valores de $\theta = 0{,}22$ y $\alpha = 0{,}8$ **no se eligieron a ojo**:
@@ -469,7 +469,7 @@ que queda bajo la mediana $\tilde{x}$ de sus puntas:
 ```math
 u = \frac{\tilde{x} - x_0}{w} - \frac12 ,
 \qquad
-\text{base} = \operatorname{clip}\big(\operatorname{round}(u - 2),\ 0,\ 5\big)
+\text{base} = \mathrm{clip}\big(\mathrm{round}(u - 2),\ 0,\ 5\big)
 ```
 
 - **Histéresis de 0,3 teclas:** la posición no cambia hasta que la mano se aleja
@@ -581,7 +581,7 @@ Al terminar una canción en Ritmo, la corrección propuesta es la **mediana** de
 los desfases de las notas acertadas:
 
 ```math
-\Delta = \operatorname{mediana}(\delta_1, \dots, \delta_m), \qquad \text{si } m \ge 10 \text{ y } |\Delta| \ge 25\ \text{ms}
+\Delta = \mathrm{mediana}(\delta_1, \dots, \delta_m), \qquad \text{si } m \ge 10 \text{ y } |\Delta| \ge 25\ \text{ms}
 ```
 
 Con la tecla `L`, el retraso compensado pasa a ser $r \leftarrow r + \Delta$ y se
