@@ -303,7 +303,7 @@ Las tolerancias son ±0,14 / ±0,28 s en fácil y ±0,10 / ±0,20 s en difícil.
 ### 6.1 Flujo de datos
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["Cámara 1280x720"] --> B["Recorte 16:9 y espejo"]
     B --> C["MediaPipe Hand Landmarker"]
     C -->|"21 puntos por mano"| D["Detector de toques"]
